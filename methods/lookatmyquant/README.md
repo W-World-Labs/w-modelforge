@@ -23,6 +23,15 @@ model = load_packed("/path/to/packed", dtype="float32", device="cuda", decode_de
 
 这是**展开权重的 Torch 参考加载器**：会占用完整 FP32/BF16 模型的内存，不代表压缩格式的高速推理。加载时校验文件哈希、参数覆盖、形状和有限值，并恢复混合行组、嵌入/输出头桶、未编码 BF16 参数及共享权重。权重可用性还需实际前向、与 `dense.pt` 的 logits 对比及加载 packed 后的独立数学评估；这些结果尚未完成。旧 `runtime_mlx/model.py` 读取的是另一种 `lamq.json`/`model.safetensors` 格式。
 
+发布前可在 CUDA 上分两个进程执行实际模型评估，9B 使用下列 dtype 和 batch；27B 分别改为 `bfloat16` 和 `8`，并使用其模型专属 cache tag：
+
+```sh
+python release_validation.py --phase reference --model-path /path/to/original --dense /path/to/dense.pt --work-dir /path/to/work --out /path/to/reference.json --dtype float32 --cache-tag qwen3.5-9b
+python release_validation.py --phase packed --packed /path/to/packed --work-dir /path/to/work --out /path/to/release-validation.json --dtype float32 --cache-tag qwen3.5-9b --batch 4 --max-new 1024 --baseline-math /path/to/math216.json
+```
+
+`reference` 依次捕获原始模型与原位加载 dense 后的同一组固定 WikiText 留出窗口，缓存 logprobs、PPL、四条公开英/中/代码/数学提示的32-token贪心结果及哈希；`packed` 不读取原始权重，独立加载打包权重，比较数值和生成结果，并直接运行同一216题数学评估。4×128 的额外窗口只用于一致性与小样本检查，不替代主流程的8/16×512评估。`--baseline-math` 必须是相同 dtype、题目与贪心/no-thinking/1024-token配方的原始模型结果；报告计算90%数学保留门槛，PPL/KL及最终发布仍需人工审阅。此命令不会上传 HF，也不会写发布完成标记。
+
 ---
 
 以下为保留的上游说明，其 “our run” 和已公布成绩均指上游作者的实验。
