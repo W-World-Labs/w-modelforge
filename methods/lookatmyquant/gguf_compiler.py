@@ -365,10 +365,20 @@ def evaluate(args):
         for f in args.files.split(","):
             g = w / f
             o = sh([BIN / "llama-perplexity", "-m", g, "-f", w / f"{text}.txt", *common, "--kl-divergence", "--kl-divergence-base", base_kld])
+            (w / f"{g.stem}-{text}-native-ppl.log").write_text(o)
             ppl = re.search(r"Mean PPL\(Q\)\s*:\s*([\d.]+)", o) or re.search(r"Final estimate: PPL = ([\d.]+)", o)
+            original_ppl = re.search(r"Mean PPL\(base\)\s*:\s*([\d.]+)", o)
             kld = re.search(r"Mean\s+KLD:\s*([\d.]+)", o)
+            if not (ppl and original_ppl and kld):
+                raise ValueError("native PPL/KL output is incomplete; inspect saved command log")
+            values = [float(hit.group(1)) for hit in (ppl, original_ppl, kld)]
+            if not all(math.isfinite(value) for value in values) or min(values[:2]) <= 0:
+                raise ValueError("native PPL/KL is nonfinite or invalid")
+            from row_allocation import file_sha256
             res.setdefault(f, {"bytes": g.stat().st_size})[text] = {
-                "ppl": float(ppl.group(1)) if ppl else None, "kl": float(kld.group(1)) if kld else None}
+                "ppl": values[0], "original_bf16_ppl": values[1], "ppl_ratio": values[0] / values[1],
+                "kl": values[2], "context": args.context, "chunks": args.eval_chunks,
+                "text_sha256": file_sha256(w / f"{text}.txt")}
             log(f"{f} {text}: ppl {res[f][text]['ppl']}, KL {res[f][text]['kl']}")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(res, indent=1))
