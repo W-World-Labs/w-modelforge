@@ -87,7 +87,7 @@ LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
   bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf
 ```
 
-转换明确使用 `--no-mtp`。语言 GGUF 按导出 dtype 选择：9B 使用 F32，27B 使用 BF16，避免 `auto` 将 9B 默默转换为 F16；mmproj 使用 BF16，并保留转换器要求的 F32 张量，没有额外低比特视觉量化。Qwen 视觉卷积会拆分、语言注意力也会重排，因此 **GGUF 的布局和张量字节不是原始 333 张量的 safetensors 布局**；原始 BF16 文件仍保留在下载目录。转换记录包含引擎 commit、输出大小和 SHA256。
+语言转换明确使用 `--no-mtp`；视觉转换器自行忽略 MTP，不接收该标志。语言 GGUF 按导出 dtype 选择：9B 使用 F32，27B 使用 BF16，避免 `auto` 将 9B 默默转换为 F16；mmproj 使用 BF16，并保留转换器要求的 F32 张量，没有额外低比特视觉量化。Qwen 视觉卷积会拆分、语言注意力也会重排，因此 **GGUF 的布局和张量字节不是原始 333 张量的 safetensors 布局**；原始 BF16 文件仍保留在下载目录。转换记录包含引擎 commit、输出大小和 SHA256。
 
 运行参数可通过 `LLAMA_SERVER`、`N_GPU_LAYERS`、`HOST`、`PORT`、`MAX_MODEL_LEN`、`SERVED_MODEL_NAME` 调整，额外 llama-server 参数直接追加。多模态必须同时传语言 GGUF 和 mmproj；官方接口见 [llama.cpp 多模态说明](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/docs/multimodal.md)。
 

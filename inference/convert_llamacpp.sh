@@ -20,7 +20,7 @@ fi
 mkdir -p "$output"
 python "$engine/convert_hf_to_gguf.py" "$model" --no-mtp \
   --outtype "$language_type" --outfile "$output/language.gguf"
-python "$engine/convert_hf_to_gguf.py" "$model" --mmproj --no-mtp \
+python "$engine/convert_hf_to_gguf.py" "$model" --mmproj \
   --outtype bf16 --outfile "$output/mmproj.gguf"
 engine_revision="$(git -C "$engine" rev-parse HEAD)"
 python - "$output" "$language_type" "$engine_revision" <<'PY'
