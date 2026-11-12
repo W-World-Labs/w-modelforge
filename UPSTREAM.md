@@ -13,7 +13,7 @@ The inherited source has moved to `methods/lookatmyquant/`. Source filenames bel
 
 | Files | Change |
 | --- | --- |
-| `quantize.py` | CPU offload of reference and quantized models; stage current decoder layers; use a single resident model for repeated statistics; chunked GPU trellis state recovery; reuse the same input rotation and read-only environment within a stage. |
+| `quantize.py` | CPU offload of reference and quantized models; release saved CPU tensor references before offloaded evaluation; stage current decoder layers; use a single resident model for repeated statistics; chunked GPU trellis state recovery; reuse the same input rotation and read-only environment within a stage. |
 | `opgraph/codes.py` | Bounded, complete-row CUDA lookup and path validation; reuse prepared input rotations and Hessian environments without changing row-dependent sweep state. |
 | `math_calibration.py`, `row_importance.py`, `math_eval.py` | Explicit FP32/BF16 options, preserving FP32 defaults; model-specific evaluation cache tags. |
 | `compiler_artifact.py` | Carry source model license and notice assets when available. |

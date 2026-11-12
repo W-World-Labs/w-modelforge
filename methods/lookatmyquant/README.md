@@ -48,7 +48,7 @@ outputs = model.generate(**inputs, do_sample=False, max_new_tokens=128)
 print(processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True))
 ```
 
-也可在命令行使用 `--vision-file /path/to/vision.safetensors --processor-dir /path/to/repository --image /path/to/image.png --prompt '描述图片。'`。加载器只构造一次完整多模态 wrapper，复用现有 packed 语言权重还原，并检查原始视觉的参数覆盖、形状、BF16 dtype 和有限值；不量化视觉权重，不把视觉的 FP32 非持久 rotary buffers 改为 BF16。官方前向会把像素转为视觉 dtype、把视觉特征转为语言 embedding dtype，processor 返回的 `mm_token_type_ids` 必须保留。新增图文路径仍待实际模型验证；原有文本数学结果不能代表视觉质量，也没有新增视频质量或速度结论。
+也可在命令行使用 `--vision-file /path/to/vision.safetensors --processor-dir /path/to/repository --image /path/to/image.png --prompt '描述图片。'`。加载器只构造一次完整多模态 wrapper，复用现有 packed 语言权重还原，并检查原始视觉的参数覆盖、形状、BF16 dtype 和有限值；不量化视觉权重，不把视觉的 FP32 非持久 rotary buffers 改为 BF16。官方前向会把像素转为视觉 dtype、把视觉特征转为语言 embedding dtype，processor 返回的 `mm_token_type_ids` 必须保留。9B已完成实际模型验证：333个视觉张量原字节hash全部相同，两张颜色图片分别答red/blue；与dense量化参考的4×128语言KL约1.205e-11、top1和四条32-token提示一致。27B待其语言构建和评估完成后验证。文本数学结果不代表视觉质量，两张图片不构成广泛视觉基准，也没有视频质量或速度结论。
 
 发布前可在 CUDA 上分两个进程执行实际模型评估，9B 使用下列 dtype 和 batch；27B 分别改为 `bfloat16` 和 `8`，并使用其模型专属 cache tag：
 
