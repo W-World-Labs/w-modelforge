@@ -90,6 +90,8 @@ def gguf_map(model, base_gguf, cache):
                 P = parameter.float().cpu()
                 c = float((X * P).sum() / (X * X).sum())
                 if float((c * X - P).abs().max()) <= 1e-2 * float(P.abs().max()):
+                    if "qwen3_5" in cfg.model_type and not torch.equal((c * X).to(parameter.dtype), parameter.cpu()):
+                        continue
                     found = [n, tr, c]
                     break
             if found:
