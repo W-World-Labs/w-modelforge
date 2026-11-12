@@ -486,8 +486,10 @@ def price(r, t):
     """One option's cost under target t, in bits per decoded token (stored bits for disk)."""
     if r["kind"] == "kv":
         return t["ctx"] * r["kv bits per token"]
-    import quantize as rq
-    fam = rq.parse(r["option"])[0] if (r["option"] == "fp16" or rq.PROGRAM.fullmatch(str(r["option"]))) else "other"
+    fam = "other"
+    if "gguf tensor" not in r:
+        import quantize as rq
+        fam = rq.parse(r["option"])[0] if (r["option"] == "fp16" or rq.PROGRAM.fullmatch(str(r["option"]))) else "other"
     return (r["bits"] + t["ops"] * OPS.get(fam, 2.0) * r["weights"]) / t["batch"]
 
 
@@ -526,6 +528,8 @@ def program_of(r, cross=True):
     o = str(r["option"])
     if r["kind"] == "kv":
         return int(o)
+    if "gguf tensor" in r:
+        return o
     import quantize as rq  # only our own codes take the cross-term target (llama.cpp types are named as llama.cpp does)
     ours = rq.PROGRAM.fullmatch(o) is not None
     return o + "x" if r["kind"] in ("linear", "experts") and cross and ours else o
