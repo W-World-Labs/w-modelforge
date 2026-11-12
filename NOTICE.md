@@ -14,6 +14,8 @@ The trellis, Viterbi, LDLQ, Hadamard and EMA codebook implementations used here 
 
 Runtime dependencies are installed separately, retain their own licenses and are not relicensed by this repository: [PyTorch](https://github.com/pytorch/pytorch/blob/main/LICENSE) (BSD-style, with third-party notices), [Transformers](https://github.com/huggingface/transformers/blob/main/LICENSE), [Datasets](https://github.com/huggingface/datasets/blob/main/LICENSE), [Safetensors](https://github.com/huggingface/safetensors/blob/main/LICENSE) (Apache-2.0), [NumPy](https://github.com/numpy/numpy/blob/main/LICENSE.txt), [pandas](https://github.com/pandas-dev/pandas/blob/main/LICENSE) (BSD-3-Clause), and [Modal](https://github.com/modal-labs/modal-client/blob/main/LICENSE) (Apache-2.0). The Colab workflow separately uses [rclone](https://github.com/rclone/rclone/blob/master/COPYING) (MIT), Google OAuth libraries and the official Colab CLI's installed OAuth client resources. Preserve dependency notices when redistributing their binaries.
 
+Optional inference scripts call separately installed [vLLM](https://github.com/vllm-project/vllm/blob/main/LICENSE) (Apache-2.0) and [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE) (MIT). Their sources and binaries are not vendored. Standard HF/GGUF conversion does not add native support for this project's packed format; engine-specific dtype changes or further quantization require separate evaluation.
+
 ## Model weights and generated artifacts
 
 The repository does **not** contain model weights. The pilot downloads:

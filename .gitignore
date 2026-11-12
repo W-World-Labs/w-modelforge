@@ -8,6 +8,10 @@ colab/.colab-state*.json
 runs/
 colab/runs/
 colab/STATUS.json
+/models/
+/expanded/
+/gguf/
+/llama.cpp/
 *rclone*.conf
 *.pt
 *.safetensors

@@ -9,6 +9,7 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 | LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
 
 - [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
+- [`inference/`](inference/README.md)：下载与校验、完整多模态参考启动，以及标准 HF 导出、vLLM 和 llama.cpp 转换/启动脚本；后两者的后端质量和速度尚未实测。
 - [来源与改动](UPSTREAM.md)：固定源码基线、我们的修改和维护约定。
 - [版权与第三方说明](NOTICE.md) / [许可证](LICENSE)：代码、模型权重与数据的许可分别记录。
 
