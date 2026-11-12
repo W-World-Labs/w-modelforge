@@ -19,9 +19,36 @@ from load_packed import load_packed
 model = load_packed("/path/to/packed", dtype="float32", device="cuda", decode_device="cuda")
 ```
 
-9B 使用 `float32`，27B 使用 `bfloat16`，与各自量化构建保持一致。也可执行 `python load_packed.py /path/to/packed --dtype bfloat16 --device cuda --decode-device cuda --prompt '计算 123 × 456，并写出过程。'`；`--prompt` 可重复指定。默认在 CPU 解码，`decode_device="cuda"` 只加速当前矩阵的分块还原，全部填充后才把模型搬到目标设备。
+9B 使用 `float32`，27B 使用 `bfloat16`，与各自量化构建保持一致。也可执行 `python load_packed.py /path/to/packed --dtype bfloat16 --device cuda --decode-device cuda --prompt '计算 123 × 456，并写出过程。'`；`--prompt` 可重复指定。模型直接在请求的设备真实初始化 rotary buffer 和参数，再逐矩阵还原填充；CUDA 加载避免在主机保留整份初始化模型；默认 CPU 解码，`decode_device="cuda"` 可加速当前矩阵的还原。
 
 这是**展开权重的 Torch 参考加载器**：会占用完整 FP32/BF16 模型的内存，不代表压缩格式的高速推理。加载时校验文件哈希、参数覆盖、形状和有限值，并恢复混合行组、嵌入/输出头桶、未编码 BF16 参数及共享权重。权重可用性还需实际前向、与 `dense.pt` 的 logits 对比及加载 packed 后的独立数学评估；这些结果尚未完成。旧 `runtime_mlx/model.py` 读取的是另一种 `lamq.json`/`model.safetensors` 格式。
+
+## 保留原始 BF16 视觉组件
+
+可用 `python extract_vision.py --model-path /path/to/original-snapshot --model-id Qwen/Qwen3.5-9B --out /path/to/vision-assets` 原样提取视觉张量和预处理资产，并记录每个张量及文件哈希。
+
+语言量化无需重做。把同一原始模型 revision 的完整 `model.visual.*` 权重（包含视觉编码器和 merger/projector，保留原名称及 BF16）另存为仓库根目录 `vision.safetensors`，并在根目录保留完整原始配置、tokenizer/chat-template，以及 `processor_config.json`、`preprocessor_config.json`、`video_preprocessor_config.json` 等原 processor 资产（以原模型实际存在文件为准）。这些额外资产放在 `packed/` 之外，以保留原 packed manifest 和哈希。
+
+```python
+from pathlib import Path
+from transformers import AutoProcessor
+from load_packed import load_packed
+
+root = Path("/path/to/downloaded/repository")
+model = load_packed(root / "packed", dtype="float32", device="cuda", decode_device="cuda",
+                    vision_file=root / "vision.safetensors")  # 27B language: dtype="bfloat16"
+processor = AutoProcessor.from_pretrained(root, local_files_only=True)
+messages = [{"role": "user", "content": [
+    {"type": "image", "image": "/absolute/path/to/image.png"},
+    {"type": "text", "text": "Describe this image."},
+]}]
+inputs = processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True,
+                                      enable_thinking=False, return_dict=True, return_tensors="pt").to("cuda")
+outputs = model.generate(**inputs, do_sample=False, max_new_tokens=128)
+print(processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True))
+```
+
+也可在命令行使用 `--vision-file /path/to/vision.safetensors --processor-dir /path/to/repository --image /path/to/image.png --prompt '描述图片。'`。加载器只构造一次完整多模态 wrapper，复用现有 packed 语言权重还原，并检查原始视觉的参数覆盖、形状、BF16 dtype 和有限值；不量化视觉权重，不把视觉的 FP32 非持久 rotary buffers 改为 BF16。官方前向会把像素转为视觉 dtype、把视觉特征转为语言 embedding dtype，processor 返回的 `mm_token_type_ids` 必须保留。新增图文路径仍待实际模型验证；原有文本数学结果不能代表视觉质量，也没有新增视频质量或速度结论。
 
 发布前可在 CUDA 上分两个进程执行实际模型评估，9B 使用下列 dtype 和 batch；27B 分别改为 `bfloat16` 和 `8`，并使用其模型专属 cache tag：
 

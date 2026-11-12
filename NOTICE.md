@@ -23,7 +23,7 @@ The repository does **not** contain model weights. The pilot downloads:
 | Qwen/Qwen3.5-9B | `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | [Apache-2.0 model license](https://huggingface.co/Qwen/Qwen3.5-9B/blob/c202236235762e1c871ad0ccb60c8ee5ba337b9a/LICENSE) |
 | Qwen/Qwen3.8-27B | `37561816e66b5b9153b1b64c10968c18c1e6f4a0` | [Apache-2.0 model card](https://huggingface.co/Qwen/Qwen3.8-27B/blob/37561816e66b5b9153b1b64c10968c18c1e6f4a0/README.md) |
 
-Model licenses are separate from this repository's MIT code license. Quantized artifacts are modified model weights; retain the source model's LICENSE/NOTICE files, model identity/revision, and a statement of the quantization changes. The pilot handles the **text model only**, not vision or video components. Its packed format is the upstream custom format.
+Model licenses are separate from this repository's MIT code license. Quantized artifacts are modified model weights; retain the source model's LICENSE/NOTICE files, model identity/revision, and a statement of the quantization changes. Only language weights are quantized. Optional original BF16 visual encoder/merger weights and processor assets are preserved separately without quantization or dtype conversion; actual multimodal quality requires its own validation. The language packed format is the upstream custom format.
 
 ## Calibration and evaluation data
 

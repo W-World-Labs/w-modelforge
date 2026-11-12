@@ -260,6 +260,12 @@ def main():
                     else:
                         python("row_allocation.py", "pack", "--source-dir", SOURCE, "--model-path", model_dir,
                                "--trial-dir", WORK, "--codes", WORK / "codes.pt", "--output", OUTPUT / "packed")
+                    vision = OUTPUT / "multimodal"
+                    if vision.exists():
+                        if not (vision / "vision-provenance.json").is_file():
+                            raise RuntimeError("Existing vision extraction is incomplete; inspect it before retrying")
+                    else:
+                        python("extract_vision.py", "--model-path", model_dir, "--model-id", MODEL, "--out", vision)
                 elif stage == "evaluate":
                     evaluation_args = ("--dtype", DTYPE,
                                        "--cache-tag", MODEL.split("/")[-1].lower() if CPU_OFFLOAD else "qwen35",
