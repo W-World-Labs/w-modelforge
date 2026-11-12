@@ -8,7 +8,9 @@ Use the complete model release: `packed/`, original BF16 `vision.safetensors`, p
 | --- | --- | --- |
 | `run_reference.sh` | Custom packed language + BF16 vision | Reuses the actually validated `load_packed.py`; expands into a dense Torch model |
 | `export_hf.py` → `serve_vllm.sh` | Expanded standard HF safetensors | Optional export/launch path; no vLLM quality or speed measurement |
-| `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | Standard HF → language GGUF + mmproj GGUF | Optional conversion/launch path; no llama.cpp quality or speed measurement |
+| `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | Standard HF → language GGUF + mmproj GGUF | 9B conversion/CUDA startup checked with red/blue/156; no engine quality or speed benchmark |
+
+On 2026-11-12 UTC, the public 9B download/reference launch, CPU standard-HF export (all 333 original BF16 visual hashes), F32 language GGUF and BF16/F32 mmproj conversion, and CUDA llama.cpp server startup passed basic checks. The server answered `red`, `blue` and `156`, then stopped. See the [9B model card](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2) for receipts. These are format/startup checks; math216/PPL/speed were not measured through llama.cpp. vLLM and 27B external-engine execution remain unvalidated.
 
 **vLLM and llama.cpp cannot directly load `opgraph-packed-1`.** Optional backend paths expand weights and lose the current packed storage size. These scripts do not implement native trellis kernels. Further Q4/IQ or other GGUF quantization is a new lossy conversion requiring separate evaluation; existing scores do not transfer to it.
 
@@ -89,7 +91,7 @@ cmake --build llama.cpp/build --config Release -j 8
 PATH="$PWD/.venv-gguf/bin:$PATH" \
   bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
 LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
-  bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf
+  bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf --parallel 1 --reasoning off
 ```
 
 Language conversion uses `--no-mtp`; the vision converter excludes MTP itself and does not accept this flag. Language output follows build dtype: F32 for 9B, BF16 for 27B, avoiding `auto` silently selecting F16 for 9B. mmproj uses BF16 with converter-required F32 tensors, without extra low-bit visual quantization. Visual convolutions split and language attention tensors reorder, so **GGUF layouts/bytes differ from the original 333-tensor safetensors layout**. Original BF16 vision remains in the downloaded release. Receipts record engine commit, sizes and SHA256.

@@ -7,7 +7,9 @@
 | --- | --- | --- |
 | `run_reference.sh` | 原始自定义 packed + BF16 视觉 | 复用已实际验证的 `load_packed.py`，展开为密集 Torch 权重 |
 | `export_hf.py` → `serve_vllm.sh` | 展开后的标准 HF safetensors | 可选转换/启动入口；不代表已完成 vLLM 质量或速度评测 |
-| `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | 标准 HF → language GGUF + mmproj GGUF | 可选转换/启动入口；不代表已完成 llama.cpp 质量或速度评测 |
+| `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | 标准 HF → language GGUF + mmproj GGUF | 9B实际转换/CUDA启动及red、blue、156请求通过；无该引擎质量/速度基准 |
+
+2026-11-12 UTC：9B公开下载/参考启动、CPU标准HF导出（333个原始BF16视觉哈希一致）、F32 GGUF与BF16/F32 mmproj转换及llama.cpp CUDA启动均已实际核验，三请求回答red、blue、156后停止临时服务。回执见[9B模型卡](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2)。这只核验格式与启动，llama.cpp未测数学216、PPL或速度；vLLM及27B外部引擎仍未实际执行。
 
 **vLLM 和 llama.cpp 不能直接读取本项目的 `opgraph-packed-1`。** 后两条路径会展开权重，失去当前 packed 文件的低比特存储体积；脚本没有实现 trellis 原生推理内核。再次用 GGUF Q4/IQ 等量化属于新的有损转换，需要重新评估，不能沿用当前模型卡分数。
 
@@ -89,7 +91,7 @@ cmake --build llama.cpp/build --config Release -j 8
 PATH="$PWD/.venv-gguf/bin:$PATH" \
   bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
 LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
-  bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf
+  bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf --parallel 1 --reasoning off
 ```
 
 语言转换明确使用 `--no-mtp`；视觉转换器自行忽略 MTP，不接收该标志。语言 GGUF 按导出 dtype 选择：9B 使用 F32，27B 使用 BF16，避免 `auto` 将 9B 默默转换为 F16；mmproj 使用 BF16，并保留转换器要求的 F32 张量，没有额外低比特视觉量化。Qwen 视觉卷积会拆分、语言注意力也会重排，因此 **GGUF 的布局和张量字节不是原始 333 张量的 safetensors 布局**；原始 BF16 文件仍保留在下载目录。转换记录包含引擎 commit、输出大小和 SHA256。
