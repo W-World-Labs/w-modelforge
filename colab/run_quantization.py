@@ -13,7 +13,7 @@ import sys
 import time
 
 SOURCE_REPO = "https://github.com/W-World-Labs/w-modelforge.git"
-COMMIT = "a5308ddbaa3b7577e4bb380c688e86c1971c70f7"
+COMMIT = "5ecf73f499d206fc004619a5625a1848263983d1"
 UPSTREAM_COMMIT = "4716ffee3da205a8d1df94e4abc629040893fa53"
 MODEL = "Qwen/Qwen3.5-9B"
 MODEL_REVISION = "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
