@@ -56,11 +56,11 @@ Run native math separately for the original BF16 GGUF and the adaptive GGUF. `ma
 python "$METHOD/math_gguf.py" --kind original --model-id Qwen/Qwen3.5-9B \
   --snapshot /absolute/path/to/pinned-original-snapshot --gguf "$GGUF_WORK/bf16.gguf" \
   --mmproj /absolute/path/mmproj.gguf --llama-dir /absolute/path/llama.cpp \
-  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-original.json"
+  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-original.json" --port 18081
 python "$METHOD/math_gguf.py" --kind adaptive --model-id Qwen/Qwen3.5-9B \
   --snapshot /absolute/path/to/pinned-original-snapshot --gguf "$GGUF_WORK/plan_adaptive.gguf" \
   --mmproj /absolute/path/mmproj.gguf --llama-dir /absolute/path/llama.cpp \
-  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-adaptive.json"
+  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-adaptive.json" --port 18082
 ```
 
 After a model's GGUF package is published under `gguf-adaptive/`, `MODEL_FORMAT=gguf bash inference/download.sh REPOSITORY ./models/native` downloads only that package and verifies its checksums. The default packed download excludes the optional GGUF files. Use `serve_llamacpp.sh` with the downloaded language GGUF and matching mmproj.

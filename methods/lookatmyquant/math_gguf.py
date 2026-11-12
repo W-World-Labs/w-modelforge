@@ -123,6 +123,7 @@ def main():
         if report["state"] == "completed":
             print(json.dumps(report["summary"])); return
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", args.port))
     command = [str(binary), "-m", str(args.gguf), "--mmproj", str(args.mmproj),
         "--host", "127.0.0.1", "--port", str(args.port), "--alias", "w-modelforge",
