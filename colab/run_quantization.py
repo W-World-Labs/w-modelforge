@@ -162,7 +162,11 @@ def allocate(model_dir):
     row_plan["distortion_provenance"] = "Fisher-weighted 4^-bits proxy; quality measured separately"
     save("row-plan.json", row_plan)
     # 9B has an untied head. Both large vocabulary tables must be compressed and counted.
-    table = {"sizes": [arch.text_config(model.config).vocab_size], "programs": ["lm4"],
+    vocab_size = arch.text_config(model.config).vocab_size
+    # The full 27B vocabulary creates multiple 10 GB FP64 temporaries alongside both CPU models.
+    sizes = ([min(32768, vocab_size - start) for start in range(0, vocab_size, 32768)]
+             if MODEL == "Qwen/Qwen3.8-27B" else [vocab_size])
+    table = {"sizes": sizes, "programs": ["lm4"] * len(sizes),
              "order": "frequency in the text mix"}
     save("plan.json", {"model": MODEL, "linears": linears, "embed": table,
                        "head": table, "trellis fit": "ema"})
