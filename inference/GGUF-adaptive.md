@@ -68,3 +68,7 @@ After a model's GGUF package is published under `gguf-adaptive/`, `MODEL_FORMAT=
 Native perplexity/KL, independent math216, full-file checksums and basic image inference must accompany publication. Provide the matching BF16/F32 mmproj and state any converter-required F32 visual tensors. Standard llama.cpp compatibility does not establish compatibility with every version of a downstream application or prove a throughput improvement.
 
 Source/compiler code: Shin Megami Boson and W-World-Labs, MIT; external llama.cpp, MIT; Qwen weights, Apache-2.0. See [NOTICE](../NOTICE.md) and [UPSTREAM](../UPSTREAM.md).
+
+## Independent 9B results
+
+Original BF16 → adaptive GGUF: math 183→184/216 at cap 4096, cap hits 29→24, relative count 100.55%, on the same native four-slot/F16-KV profile. Both models passed the two basic images. Language size 4,622,312,672 bytes; original BF16/F32 mmproj adds 921,704,384 bytes. Eight 512-context chunks: WikiText PPL 8.915811→9.263493, KL 0.038616; mixed-text PPL 5.393594→5.448359, KL 0.041946. Stock Q3_K_M PPL is 9.476296/5.737011 and KL 0.076973/0.067423. These short measurements are separate from LAMQ. Binomial falls 8→6/18; the single-run result does not establish a capability gain or general speedup. Full raw reports and bilingual cards accompany the independent GGUF package. The 27B run is still measuring.

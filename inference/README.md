@@ -12,7 +12,7 @@ For fresh, standard-format mixed-precision quantization from original BF16, see 
 | `export_hf.py` → `serve_vllm.sh` | Expanded standard HF safetensors | Optional export/launch path; no vLLM quality or speed measurement |
 | `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | Standard HF → language GGUF + mmproj GGUF | 9B conversion/CUDA startup checked with red/blue/156; no engine quality or speed benchmark |
 
-On 2026-11-12 UTC, the public 9B download/reference launch, CPU standard-HF export (all 333 original BF16 visual hashes), F32 language GGUF and BF16/F32 mmproj conversion, and CUDA llama.cpp server startup passed basic checks. The server answered `red`, `blue` and `156`, then stopped. See the [9B model card](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2) for receipts. These are format/startup checks; math216/PPL/speed were not measured through llama.cpp. vLLM and 27B external-engine execution remain unvalidated.
+On 2026-11-12 UTC, the public 9B download/reference launch, CPU standard-HF export (all 333 original BF16 visual hashes), F32 language GGUF and BF16/F32 mmproj conversion, and CUDA llama.cpp server startup passed basic checks. The server answered `red`, `blue` and `156`, then stopped. See the [9B model card](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2) for receipts. These are format/startup checks of the LAMQ reconstruction export; its math216/PPL/speed were not measured through llama.cpp. Fresh original-BF16 adaptive GGUF has separate results in the linked guide. vLLM and 27B LAMQ external-engine execution remain unvalidated.
 
 **vLLM and llama.cpp cannot directly load `opgraph-packed-1`.** Optional backend paths expand weights and lose the current packed storage size. These scripts do not implement native trellis kernels. Further Q4/IQ or other GGUF quantization is a new lossy conversion requiring separate evaluation; existing scores do not transfer to it.
 
@@ -26,7 +26,7 @@ cd w-modelforge
 python -m pip install transformers==5.16.1 numpy==2.4.6 huggingface_hub safetensors pillow
 bash inference/download.sh W-World-Labs/Qwen3.5-9B-LAMQ2 ./models/qwen35-9b
 # An optional third argument pins an HF commit; default: main.
-# Anonymous 27B downloads require its release review to pass and the repo to become public:
+# The reviewed27B LAMQ release is also public:
 # bash inference/download.sh W-World-Labs/Qwen3.8-27B-LAMQ2 ./models/qwen38-27b
 
 bash inference/run_reference.sh ./models/qwen35-9b \

@@ -8,7 +8,7 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 | 方案 | 代码与来源 | 当前范围 |
 | --- | --- | --- |
 | LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
-| 标准 GGUF 自适应量化 | 上游 `gguf_compiler.py` 与 `compiler.py`，MIT；[配方](inference/GGUF-adaptive.zh-CN.md) | 从原始 BF16 重新量化，对标准 Q/IQ 类型实测张量 KL、按大小预算分配。Colab/Qwen 适配中，独立成绩待完成。 |
+| 标准 GGUF 自适应量化 | 上游 `gguf_compiler.py` 与 `compiler.py`，MIT；[配方](inference/GGUF-adaptive.zh-CN.md) | 从原始 BF16 重新量化，对标准 Q/IQ 类型实测张量 KL、按大小预算分配。9B独立原生评测与发布审核通过；27B正在测量，成绩分开记录。 |
 
 - [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
 - [`inference/`](inference/README.zh-CN.md)：下载与校验、完整多模态参考启动，以及标准 HF 导出、vLLM 和 llama.cpp 转换/启动脚本；后两者的后端质量和速度尚未实测。
@@ -28,7 +28,7 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 9B标准HF导出已实际完成，333个视觉张量保持原始BF16哈希；F32语言GGUF与BF16/F32 mmproj转换、llama.cpp CUDA启动也已实际执行，三次基础请求回答red、blue、156。这只核验该LAMQ展开导出的格式/启动，尚无它的原生数学/PPL/速度基准，vLLM仍未执行。
 
 
-另行从原始BF16生成的 **标准GGUF自适应方案**，已构建9B语言文件 **4.622 GB**，在标准Q3_K_M大小预算内。原生8个512上下文WikiText块中，BF16/标准/自适应PPL为8.916/9.476/9.263，标准/自适应KL为0.07697/0.03862。这些短评测与LAMQ分开记录；GGUF原始/自适应4096数学仍在跑，完成复核后公开。27B GGUF也在适配，见[独立配方与评估流程](inference/GGUF-adaptive.zh-CN.md)。
+另行从原始BF16生成的 **标准GGUF自适应方案**，已构建9B语言文件 **4.622 GB**，在标准Q3_K_M大小预算内。原生8个512上下文WikiText块中，BF16/标准/自适应PPL为8.916/9.476/9.263，标准/自适应KL为0.07697/0.03862。独立原生4096数学已完成：**BF16 183/216→自适应184/216，相对正确数100.55%**，截断 **29→24**。432条回答已逐题重打分，并由冻结驱动重新解码核验；双方两例基础图像均通过。小样本单次多对一题不能证明能力提升，组合数仍8→6/18。原生BF16基线也不同于历史Torch FP32的188分。未量化BF16/F32视觉mmproj另占0.922GB。这些结果与LAMQ分开记录；27B GGUF正在测量，见[独立配方与评估流程](inference/GGUF-adaptive.zh-CN.md)。
 
 ## 来源
 

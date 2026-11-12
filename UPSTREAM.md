@@ -34,3 +34,5 @@ The algorithm remains the upstream trellis/LDLQ/Hadamard recipe with its cached 
 Use `upstream` for the original repository and `origin` for this fork. Keep downstream commits separate from the baseline; inspect future upstream changes before merging. Record the source commit, model revision, dtype, recipe, environment and output hashes for each run. Never substitute an unrecorded branch head into an existing run.
 
 The active 9B process uses its previously deployed memory patch; later source optimizations first apply to the queued 27B process. A running process is not automatically updated by a Git push. Completed-layer counts and GPU readings are progress observations, not reproducibility or quality claims.
+
+The separate 9B adaptive standard-GGUF run completed its native release review: original BF16 183/216 versus adaptive 184/216 at cap4096, with 29/24 cap hits; short WikiText PPL 8.915811/9.263493 and KL 0.038616. These results use frozen measurement/build/math revisions recorded with the artifact, rather than replacing legacy LAMQ scores. The original-BF16 27B GGUF run remains in progress.
