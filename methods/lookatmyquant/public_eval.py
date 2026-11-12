@@ -68,7 +68,8 @@ def gguf_map(model, base_gguf, cache):
                 if A_.shape[0] % (2 * h) == 0:
                     yield f"unpermute:{h}", G.unpermute(A_, h)
         transform = G.qwen35_layout(name, cfg)
-        if transform:
+        # GDN axes require the native (out, in) shape, not another same-size candidate's orientation.
+        if transform and A_.shape == (shape[0], int(np.prod(shape[1:]))):
             yield transform, G.restore_layout(A_, transform).reshape(shape)
     out, used, unmatched = {}, set(), []
     r = GGUFReader(str(base_gguf))
