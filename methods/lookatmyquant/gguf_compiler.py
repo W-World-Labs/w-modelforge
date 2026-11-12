@@ -334,6 +334,8 @@ def build(args):
             want[gname[item]] = stored[item, t]
             over += ["--tensor-type", f"^{re.escape(gname[item])}$={stored[item, t].lower()}"]
     out = w / f"plan_{Path(args.plan).stem}.gguf"
+    if args.default.upper() in ("F32", "F16", "BF16") and any(t not in ("F32", "F16", "BF16") for t in want.values()):
+        raise ValueError("llama.cpp ignores per-tensor quantized overrides with a floating-point global type; use --default Q4_K")
     if out.exists():
         raise ValueError(f"output already exists: {out}")
     sh([BIN / "llama-quantize", "--pure", "--imatrix", w / "imatrix.gguf", *over, w / "bf16.gguf", out, args.default])

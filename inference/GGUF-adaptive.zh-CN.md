@@ -16,6 +16,8 @@
 4. `build`：用标准 `llama-quantize --tensor-type` 构建，核对实际类型与存储字节。
 5. `evaluate`：通过原生 llama.cpp 测量 PPL/KL；随后独立完成原始/自适应 GGUF 的数学评测和图像核验。
 
+构建全局类型使用 `--default Q4_K`；此版本 llama.cpp 在全局为 BF16/F16/F32 时会跳过逐张量低比特覆盖。计划中需要保留的 BF16 张量仍通过明确覆盖保留，构建后逐项核对。
+
 `math_gguf.py` 分别评估原始 BF16 GGUF 和自适应 GGUF：用原始 tokenizer 渲染提示词，先逐题核对 216 份原生分词，再提交相同 token ID，使用贪心解码、四个槽位、每槽 8192 上下文、4096 生成上限和 F16 KV，关闭提示词缓存。每组保存生成 token ID 与全文，两种模型均运行相同的两例图像提示。它与此前 Torch 成绩分别记录；命令见英文指南。
 
 模型通过评估、在 `gguf-adaptive/` 发布后，使用 `MODEL_FORMAT=gguf bash inference/download.sh 仓库 ./models/native` 仅下载并校验原生 GGUF 包。默认 packed 下载会排除可选 GGUF 文件；用 `serve_llamacpp.sh` 传入语言文件及匹配的 mmproj 即可启动。

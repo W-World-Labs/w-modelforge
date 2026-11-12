@@ -41,10 +41,12 @@ python "$METHOD/compiler.py" allocate --sens "$GGUF_WORK/sensitivity.json" \
   --target disk --items linear,embed,head --budget "$GGUF_BUDGET_BITS" \
   --out "$GGUF_WORK/adaptive.json"
 python "$METHOD/gguf_compiler.py" build "${GGUF_ARGS[@]}" \
-  --sens "$GGUF_WORK/sensitivity.json" --plan "$GGUF_WORK/adaptive.json" --default BF16
+  --sens "$GGUF_WORK/sensitivity.json" --plan "$GGUF_WORK/adaptive.json" --default Q4_K
 python "$METHOD/gguf_compiler.py" evaluate "${GGUF_ARGS[@]}" \
   --files stock_Q3_K_M.gguf,plan_adaptive.gguf --out "$GGUF_WORK/native-quality.json"
 ```
+
+The global build type must be quantized: this llama.cpp version skips per-tensor quantized overrides when the global type is BF16/F16/F32. Explicit overrides still preserve the plan's individual BF16 tensors. The builder verifies every planned stored type and byte count.
 
 For 27B use its exact original snapshot, `Qwen/Qwen3.8-27B`, and a separate work directory. Temporary BF16/candidate files and native KL base logits require substantial additional disk; allocate space before starting. Keep active source revisions fixed and do not deploy changes into running evaluations.
 
