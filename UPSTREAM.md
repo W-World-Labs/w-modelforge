@@ -17,6 +17,7 @@ The inherited source has moved to `methods/lookatmyquant/`. Source filenames bel
 | `opgraph/codes.py` | Bounded, complete-row CUDA lookup and path validation; reuse prepared input rotations and Hessian environments without changing row-dependent sweep state. |
 | `math_calibration.py`, `row_importance.py`, `math_eval.py` | Explicit FP32/BF16 options, preserving FP32 defaults; model-specific evaluation cache tags. |
 | `compiler_artifact.py` | Carry source model license and notice assets when available. |
+| `load_packed.py`, `opgraph/hadamard.py` | Standalone Torch dense reference loading of the packed artifact, including row groups, vocabulary buckets, aliases and BF16 state. Existing Hadamard rules moved unchanged into a model-config-independent module shared with `opgraph/codes.py`; no packed inference kernel is added. |
 | `colab/` | Official hosted Colab MCP client and a parameterized 9B/27B PTQ/rclone workflow; no credentials, model weights, or private run logs are committed. |
 | `README.md`, `NOTICE.md`, `LICENSE`, `UPSTREAM.md` | Fork identity, upstream credit, license separation and experiment limits. |
 

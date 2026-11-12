@@ -12,6 +12,8 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 - [来源与改动](UPSTREAM.md)：固定源码基线、我们的修改和维护约定。
 - [版权与第三方说明](NOTICE.md) / [许可证](LICENSE)：代码、模型权重与数据的许可分别记录。
 
+权重发布组织为 [Hugging Face / W-World-Labs](https://huggingface.co/W-World-Labs)。只有文件完整、packed 权重能够独立加载并完成实际推理、216题数学成绩保留原模型至少90%，且PPL/KL无明显异常的版本才公开；评测结果、模型来源、许可与加载范围随模型卡一起发布。
+
 ## 当前进度
 
 2026-11-12：9B 已生成校准解答并完成 Fisher 分配，正在逐层量化；3.8-27B 已下载并准备环境，排在9B之后。尚无 W-ModelForge 完整模型的压缩大小、质量保留率或总体加速结论。显存使用随阶段变化，当前采样不能代表整个任务峰值。

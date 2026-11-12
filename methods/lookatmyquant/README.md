@@ -10,6 +10,19 @@
 
 **当前状态（2026-11-12）**：9B 正在逐层量化；3.8-27B 已下载并准备环境，等待串行运行。尚无本分支完整模型的大小、性能保留率或整体加速结论。当前配方只做文本 PTQ，不含蒸馏；自定义 packed 格式也不是 GGUF 或标准 Transformers 权重。静态检查和实机模型评估用于核验；本分支不新增单元或集成测试。
 
+## 加载本分支 packed 权重
+
+在此目录安装依赖后，`load_packed.py` 可直接读取包含 `artifact.json`、`weights.bin`、配置与 tokenizer 的目录，无需下载原始模型权重：
+
+```python
+from load_packed import load_packed
+model = load_packed("/path/to/packed", dtype="float32", device="cuda", decode_device="cuda")
+```
+
+9B 使用 `float32`，27B 使用 `bfloat16`，与各自量化构建保持一致。也可执行 `python load_packed.py /path/to/packed --dtype bfloat16 --device cuda --decode-device cuda --prompt '计算 123 × 456，并写出过程。'`；`--prompt` 可重复指定。默认在 CPU 解码，`decode_device="cuda"` 只加速当前矩阵的分块还原，全部填充后才把模型搬到目标设备。
+
+这是**展开权重的 Torch 参考加载器**：会占用完整 FP32/BF16 模型的内存，不代表压缩格式的高速推理。加载时校验文件哈希、参数覆盖、形状和有限值，并恢复混合行组、嵌入/输出头桶、未编码 BF16 参数及共享权重。权重可用性还需实际前向、与 `dense.pt` 的 logits 对比及加载 packed 后的独立数学评估；这些结果尚未完成。旧 `runtime_mlx/model.py` 读取的是另一种 `lamq.json`/`model.safetensors` 格式。
+
 ---
 
 以下为保留的上游说明，其 “our run” 和已公布成绩均指上游作者的实验。
