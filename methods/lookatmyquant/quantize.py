@@ -1808,6 +1808,7 @@ def main():
         Path(args.save).parent.mkdir(parents=True, exist_ok=True)
         torch.save({"params": changed, "text weights": res["text weights"], "program": args.program, "plan": args.plan}, args.save)
         log(f"  saved {len(changed)} quantized tensors to {args.save}")
+        del changed  # Offload evaluation replaces CPU storages; do not retain the saved old values.
     t0 = time.time()
     if args.skip_eval:
         evaluation = {"evaluation": "skipped by --skip-eval", "eval": 0, "ctx": None}
