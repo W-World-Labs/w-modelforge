@@ -16,6 +16,8 @@ Runtime dependencies are installed separately, retain their own licenses and are
 
 Optional inference scripts call separately installed [vLLM](https://github.com/vllm-project/vllm/blob/main/LICENSE) (Apache-2.0) and [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE) (MIT). Their sources and binaries are not vendored. Standard HF/GGUF conversion does not add native support for this project's packed format; engine-specific dtype changes or further quantization require separate evaluation.
 
+The adaptive standard-GGUF path reuses upstream LookAtMyQuant's `gguf_compiler.py`, `public_eval.py` and `compiler.py` sensitivity measurement/size allocation. It uses separately installed llama.cpp for importance matrices, standard Q/IQ quantization and native evaluation. Downstream Qwen3.5 GDN layout restoration follows the MIT-licensed [pinned converter](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/conversion/qwen.py). These artifacts are quantized afresh from original BF16 source weights; they do not preserve the earlier trellis codes and require independent results.
+
 ## Model weights and generated artifacts
 
 The repository does **not** contain model weights. The pilot downloads:

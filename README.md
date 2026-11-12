@@ -9,6 +9,7 @@ The first integrated method is **LookAtMyQuant**. The project uses a direct meth
 | Method | Code and source | Current scope |
 | --- | --- | --- |
 | LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/), from [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), MIT | Qwen3.5-9B / Qwen3.8-27B language PTQ: trellis coding, LDLQ, Hadamard processing, Fisher row allocation and upstream EMA codebooks, with CPU/GPU offload and shared decomposition reuse. |
+| Adaptive standard GGUF | Upstream `gguf_compiler.py` + `compiler.py`, MIT; [recipe](inference/GGUF-adaptive.md) | Fresh original-BF16 quantization with measured per-tensor KL and size-budget allocation over standard llama.cpp Q/IQ types. Colab/Qwen adaptation is in progress; independent quality results are pending. |
 
 - [Inference guide](inference/README.md): download/checksum and multimodal reference launch scripts, dense HF export, and optional vLLM / llama.cpp conversion and serving. External-engine quality and speed remain unmeasured.
 - [Colab workflow, Chinese](colab/README.md): Google's official hosted Colab MCP, reproducible execution, rclone copy and verification.

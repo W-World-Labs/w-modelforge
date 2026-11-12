@@ -3,11 +3,12 @@
 [English](README.md)
 W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化与加速实验项目。我们在这里维护具体方案的适配、运行配方和实测结果，逐步比较压缩大小、质量、量化成本与推理表现。
 
-当前只有一种已接入的方法：**LookAtMyQuant**。先把实际方案跑通并记录结果，不提前设计插件框架或通用后端接口。
+当前维护 **LookAtMyQuant** trellis 流程，并适配其标准 GGUF 编译路径。先把实际方案跑通并记录结果，不提前设计插件框架或通用后端接口。
 
 | 方案 | 代码与来源 | 当前范围 |
 | --- | --- | --- |
 | LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
+| 标准 GGUF 自适应量化 | 上游 `gguf_compiler.py` 与 `compiler.py`，MIT；[配方](inference/GGUF-adaptive.zh-CN.md) | 从原始 BF16 重新量化，对标准 Q/IQ 类型实测张量 KL、按大小预算分配。Colab/Qwen 适配中，独立成绩待完成。 |
 
 - [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
 - [`inference/`](inference/README.zh-CN.md)：下载与校验、完整多模态参考启动，以及标准 HF 导出、vLLM 和 llama.cpp 转换/启动脚本；后两者的后端质量和速度尚未实测。

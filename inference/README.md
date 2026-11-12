@@ -4,6 +4,8 @@
 
 Use the complete model release: `packed/`, original BF16 `vision.safetensors`, processor assets, `evaluation.json` and checksums. Bash scripts support Linux/macOS; the HF repositories include matching copies.
 
+For fresh, standard-format mixed-precision quantization from original BF16, see [Adaptive standard GGUF](GGUF-adaptive.md). That path uses measured tensor KL and a size budget; it is separate from the dense export of trellis weights described here and requires independent evaluation.
+
 | Path | Input | Validation scope |
 | --- | --- | --- |
 | `run_reference.sh` | Custom packed language + BF16 vision | Reuses the actually validated `load_packed.py`; expands into a dense Torch model |

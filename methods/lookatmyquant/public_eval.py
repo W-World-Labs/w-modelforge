@@ -59,7 +59,7 @@ def gguf_map(model, base_gguf, cache):
     for n, p in params.items():
         by_numel.setdefault(p.numel(), []).append(n)
 
-    def layouts(A_, shape):
+    def layouts(A_, shape, name):
         yield "id", A_.reshape(shape)
         if A_.dim() == 2 and A_.T.shape == shape:
             yield "T", A_.T
@@ -67,6 +67,9 @@ def gguf_map(model, base_gguf, cache):
             for h in heads:
                 if A_.shape[0] % (2 * h) == 0:
                     yield f"unpermute:{h}", G.unpermute(A_, h)
+        transform = G.qwen35_layout(name, cfg)
+        if transform:
+            yield transform, G.restore_layout(A_, transform).reshape(shape)
     out, used, unmatched = {}, set(), []
     r = GGUFReader(str(base_gguf))
     for t in r.tensors:
@@ -78,12 +81,13 @@ def gguf_map(model, base_gguf, cache):
         for n in by_numel.get(A_.numel(), []):
             if n in used:
                 continue
-            P = params[n].detach().float().cpu()
-            for tr, X in layouts(A_, P.shape):
-                x, y = X.reshape(-1)[:256], P.reshape(-1)[:256]
+            parameter = params[n].detach()
+            for tr, X in layouts(A_, parameter.shape, n):
+                x, y = X.reshape(-1)[:256], parameter.reshape(-1)[:256].float().cpu()
                 c = float((x * y).sum() / (x * x).sum().clamp(min=1e-30))
                 if not torch.allclose(c * x, y, rtol=1e-2, atol=1e-6):
                     continue
+                P = parameter.float().cpu()
                 c = float((X * P).sum() / (X * X).sum())
                 if float((c * X - P).abs().max()) <= 1e-2 * float(P.abs().max()):
                     found = [n, tr, c]
@@ -116,7 +120,7 @@ def load_gguf(model, path, mapping):
         a = torch.from_numpy(dequantize(t.data, t.tensor_type).astype(np.float32))
         P = params[n]
         X = a.reshape(int(t.shape[1]), int(t.shape[0])) if len(t.shape) >= 2 else a
-        X = X.T if tr == "T" else G.unpermute(X, int(tr.split(":")[1])) if tr.startswith("unpermute") else X
+        X = G.restore_layout(X, tr)
         P.data.copy_((c * X).reshape(P.shape).to(P.dtype))
         hit += 1
     return nbytes, hit

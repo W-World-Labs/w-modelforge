@@ -1,6 +1,9 @@
 # 下载、启动与后端转换
 
 [English](README.md)
+
+从原始 BF16 重新生成标准混合精度量化文件，见[标准 GGUF 自适应流程](GGUF-adaptive.zh-CN.md)。它按张量实测 KL 并分配大小预算，与本页 trellis 权重展开导出分别记录，必须独立评估。
+
 这些脚本适用于本项目发布的完整模型目录：`packed/`、原始 BF16 `vision.safetensors`、processor、`evaluation.json` 和校验清单。Shell 脚本可在 Linux/macOS 的 Bash 中运行。复制到 Hugging Face 的同名脚本与此处保持一致。
 
 | 路径 | 输入 | 当前验证范围 |

@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import math
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -55,37 +57,48 @@ def sh(cmd, **kw):
     return p.stdout + p.stderr
 
 
-def model_dir(repo):
-    return glob.glob(str(HF / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / "*/"))[0]
+def model_dir(repo, local=""):
+    if local:
+        return str(Path(local).resolve(strict=True))
+    snapshots = glob.glob(str(HF / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / "*/"))
+    if len(snapshots) != 1:
+        raise ValueError("specify --model-path for an exact cached revision")
+    return snapshots[0]
 
 
-def work(repo):
-    w = HF / "gguf" / repo.split("/")[-1]
+def work(repo, directory=""):
+    w = Path(directory) if directory else HF / "gguf" / repo.split("/")[-1]
     w.mkdir(parents=True, exist_ok=True)
     return w
 
 
 def tag_of(repo, cfg):
-    return "qwen35" if "qwen3_5" in cfg.model_type else repo.split("/")[-1].lower()
+    return repo.split("/")[-1].lower()
+
+
+def candidate(w, kind):
+    return w / ("bf16.gguf" if kind == "BF16" else f"pure_{kind}.gguf")
 
 
 def prepare(args):
     from transformers import AutoConfig, AutoTokenizer
     import compiler_arch as A
-    w = work(args.model)
-    src = model_dir(args.model)
+    w = work(args.model, args.work_dir)
+    src = model_dir(args.model, args.model_path)
+    cfg = AutoConfig.from_pretrained(src, local_files_only=True)
     base = w / "bf16.gguf"
     if not base.exists():
-        sh(["python", LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", base])
-    tok = AutoTokenizer.from_pretrained(src)
-    mix = A.TextMix(tok, tag_of(args.model, AutoConfig.from_pretrained(src)))
+        sh([args.converter_python, LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", base,
+            *(["--no-mtp"] if "qwen3_5" in cfg.model_type else [])])
+    tok = AutoTokenizer.from_pretrained(src, local_files_only=True)
+    mix = A.TextMix(tok, tag_of(args.model, cfg))
     calib = w / "calib.txt"  # the text mix's calibration split, as text: every source equally (64 windows of 512 tokens)
-    calib.write_text("\n\n".join(tok.decode(x) for x in mix.calibration(64, 512)))
+    calib.write_text("\n\n".join(tok.decode(x) for x in mix.calibration(args.calib, args.context)))
     imat = w / "imatrix.gguf"
     if not imat.exists():
-        sh([BIN / "llama-imatrix", "-m", base, "-f", calib, "-o", imat, "-c", "512", "--chunks", "64", "-ngl", "999"])
-    for t in ([] if args.skip_pure else MENU):
-        f = w / f"pure_{t}.gguf"
+        sh([BIN / "llama-imatrix", "-m", base, "-f", calib, "-o", imat, "-c", args.context, "--chunks", args.calib, "-ngl", "999"])
+    for t in ([] if args.skip_pure else args.menu.split(",")):
+        f = candidate(w, t)
         if not f.exists():
             try:  # a type llama.cpp refuses for this model (IQ3_XXS needs importance data for every tensor; Gemma 4's
                 # KV-shared layers keep key/value tensors no token reaches) is left off the menu
@@ -94,17 +107,22 @@ def prepare(args):
                 log(f"  {t}: refused by llama-quantize for this model; not on the menu")
                 if f.exists():
                     f.rename(f.with_suffix(".gguf.broken"))  # set aside, not deleted
-    for t in STOCK:
+    for t in filter(None, args.stock.split(",")):
         f = w / f"stock_{t}.gguf"
         if not f.exists():
             sh([BIN / "llama-quantize", "--imatrix", imat, base, f, t])
         (w / f"stock_{t}.json").write_text(json.dumps(gguf_tensors(f)))  # each tensor's bytes, for the budgets
     from datasets import load_dataset
     (w / "wikitext_test.txt").write_text("\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"]))
-    ev = mix.windows("eval", 8, 512, seed=2)  # the harness's held-out mix windows, sources interleaved so any prefix covers all
-    (w / "mix_eval.txt").write_text("\n\n".join(tok.decode(ev[s][k]) for k in range(8) for s in mix.sources))
-    (w / "manifest.json").write_text(json.dumps({"model": args.model, "commit": (LLAMA / "COMMIT").read_text().strip(),
-                                                  "menu": MENU, "stock": STOCK}, indent=1))
+    ev = mix.windows("eval", args.eval_chunks, args.context, seed=2)
+    (w / "mix_eval.txt").write_text("\n\n".join(tok.decode(ev[s][k]) for k in range(args.eval_chunks) for s in mix.sources))
+    from row_allocation import file_sha256
+    (w / "manifest.json").write_text(json.dumps({"model": args.model, "model_path": src,
+        "commit": subprocess.check_output(["git", "-C", str(LLAMA), "rev-parse", "HEAD"], text=True).strip(),
+        "config_sha256": file_sha256(Path(src) / "config.json"), "bf16_sha256": file_sha256(base),
+        "calibration_sha256": file_sha256(calib), "imatrix_sha256": file_sha256(imat),
+        "context": args.context, "calibration_chunks": args.calib,
+        "menu": args.menu.split(","), "stock": list(filter(None, args.stock.split(",")))}, indent=1))
     log(f"prepared {w}")
 
 
@@ -119,6 +137,42 @@ def unpermute(W, n):
     """Undo convert_hf_to_gguf.py's rotary permutation of a Llama q or k matrix (n = its heads)."""
     rows, cols = W.shape
     return W.reshape(n, rows // n // 2, 2, cols).swapaxes(1, 2).reshape(rows, cols)
+
+
+def qwen35_layout(name, cfg):
+    """Inverse of pinned llama.cpp qwen.py's grouped-to-tiled GDN V-head order."""
+    if "qwen3_5" not in cfg.model_type or ".linear_attn." not in name:
+        return None
+    keys, values = cfg.linear_num_key_heads, cfg.linear_num_value_heads
+    if keys == values:
+        return None
+    axis, prefix, width = 0, 0, cfg.linear_value_head_dim
+    if ".in_proj_qkv." in name or ".conv1d." in name:
+        prefix = 2 * keys * cfg.linear_key_head_dim
+    elif ".in_proj_a." in name or ".in_proj_b." in name:
+        width = 1
+    elif ".out_proj." in name:
+        axis = 1
+    elif ".in_proj_z." not in name:
+        return None
+    return f"v_heads:{axis}:{prefix}:{keys}:{values // keys}:{width}"
+
+
+def restore_layout(X, transform):
+    if transform == "T":
+        return X.T
+    if transform.startswith("unpermute:"):
+        return unpermute(X, int(transform.split(":")[1]))
+    if transform.startswith("v_heads:"):
+        axis, prefix, keys, per_key, width = map(int, transform.split(":")[1:])
+        tail = X.narrow(axis, prefix, X.shape[axis] - prefix)
+        shape = list(tail.shape)
+        expanded = shape[:axis] + [per_key, keys, width] + shape[axis + 1:]
+        tail = tail.reshape(expanded).transpose(axis, axis + 1).reshape(shape)
+        return torch.cat((X.narrow(axis, 0, prefix), tail), dim=axis) if prefix else tail
+    if transform != "id":
+        raise ValueError(f"unknown GGUF layout {transform}")
+    return X
 
 
 def dequantized(path, names, cfg):
@@ -144,20 +198,23 @@ def dequantized(path, names, cfg):
 def measure(args):
     """Every llama.cpp type, tensor by tensor, swapped alone into the Hugging Face model: KL to the original."""
     import compiler_arch as A
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    w = work(args.model)
-    src = model_dir(args.model)
+    from transformers import AutoTokenizer
+    w = work(args.model, args.work_dir)
+    src = model_dir(args.model, args.model_path)
     tok = AutoTokenizer.from_pretrained(src)
     dev = "cuda"
-    dtype = getattr(torch, args.dtype)
-    model = AutoModelForCausalLM.from_pretrained(src, dtype=dtype).to(dev).eval()
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.manual_seed(0)
+    from row_allocation import load_original_model, _write_json, file_sha256
+    model = load_original_model(src, dtype=args.dtype, device=dev)
     for p in model.parameters():
         p.requires_grad_(False)
     mix = A.TextMix(tok, tag_of(args.model, model.config))
     per = max(1, -(-args.windows // len(mix.sources)))
-    wd = mix.windows("calib", per, 512, seed=1)  # compiler.py measure's held-out windows
+    wd = mix.windows("calib", per, args.context, seed=1)
     held = A.with_bos(torch.cat([wd[s] for s in mix.sources])[: args.windows], tok, model)
-    bs = 4
+    bs = args.kl_batch
     with torch.no_grad():
         ref_lp = [F.log_softmax(model(held[b : b + bs].to(dev), use_cache=False).logits.float(), -1) for b in range(0, len(held), bs)]
 
@@ -176,8 +233,11 @@ def measure(args):
     ple = A.per_layer_embedding(model)
     params = dict(model.named_parameters())
     if not (w / "bf16.gguf").exists():
-        sh(["python", LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", w / "bf16.gguf"])
+        raise ValueError("run prepare before measure")
     mapping = P.gguf_map(model, w / "bf16.gguf", w / "gguf_map.json")  # gguf tensor → (parameter, layout, scale), by content
+    mapped = json.loads((w / "gguf_map.json").read_text())
+    if mapped["unmatched gguf tensors"] or mapped["parameters without a gguf tensor"]:
+        raise ValueError("incomplete GGUF/HF mapping; refusing a partial sensitivity plan")
 
     def item_of(pname):
         """The compiler's item for a parameter: a matrix of decoder layer i, the embedding, head or per-layer table, or
@@ -194,7 +254,11 @@ def measure(args):
             i, rel = pname[len(pre):].split(".", 1)
             return f"{i}.{rel[: -len('.weight')]}", "linear", rel[: -len(".weight")], int(i)
         return f"other.{pname[: -len('.weight')]}", "linear", "other", None
-    out = {"model": args.model, "method": "gguf", "data": "mix", "held-out windows": [len(held), 512], "kl floor (nothing quantized)": floor,
+    out = {"model": args.model, "method": "gguf", "data": "mix", "dtype": args.dtype,
+           "held-out windows": [len(held), args.context],
+           "held_ids_sha256": hashlib.sha256(held.cpu().numpy().tobytes()).hexdigest(),
+           "source_sha256": {n: file_sha256(Path(__file__).parent / n) for n in ("gguf_compiler.py", "public_eval.py", "compiler.py", "compiler_arch.py")},
+           "kl floor (nothing quantized)": floor,
            "tied": tied, "embed buckets": [emb.weight.shape[0]], "embed order": "frequency in the text mix", "device": dev,
            "manifest": json.loads((w / "manifest.json").read_text()), "records": []}
     recs = out["records"]
@@ -208,9 +272,9 @@ def measure(args):
             path.rename(path.with_suffix(".gguf.broken"))  # a half-written file from a refused type: set aside
             log(f"  {path.name}: unreadable, set aside")
             return False
-    for t in [t for t in MENU if (w / f"pure_{t}.gguf").exists() and readable(w / f"pure_{t}.gguf")]:
+    for t in [t for t in args.menu.split(",") if candidate(w, t).exists() and readable(candidate(w, t))]:
         t0 = time.time()
-        path = w / f"pure_{t}.gguf"
+        path = candidate(w, t)
         n_hit = 0
         for gt in GGUFReader(str(path)).tensors:
             if gt.name not in mapping:
@@ -219,7 +283,7 @@ def measure(args):
             P_ = params[pname]
             X = torch.from_numpy(dequantize(gt.data, gt.tensor_type).astype(np.float32))
             X = X.reshape(int(gt.shape[1]), int(gt.shape[0])) if len(gt.shape) >= 2 else X
-            X = X.T if tr == "T" else unpermute(X, int(tr.split(":")[1])) if tr.startswith("unpermute") else X
+            X = restore_layout(X, tr)
             orig = P_.data.clone()
             P_.data.copy_((c * X).reshape(P_.shape).to(P_.dtype))
             d = kl() - floor
@@ -233,6 +297,7 @@ def measure(args):
                 rec |= {"bucket": 0, "rows": P_.shape[0]}
             recs.append(rec)
             n_hit += 1
+            _write_json(args.out, out)
         log(f"{t}: {n_hit} tensors in {time.time() - t0:.0f}s")
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(out, indent=1))
@@ -254,10 +319,11 @@ def gguf_suffix(hf_suffix):
 def build(args):
     """A plan (compiler.py allocate over a gguf measurement, --sens) → llama-quantize with a --tensor-type override for
     every tensor the plan places (the measurement says which GGUF tensor each item is)."""
-    w = work(args.model)
+    w = work(args.model, args.work_dir)
     plan = json.loads(Path(args.plan).read_text())
     sens = json.loads(Path(args.sens).read_text())
     gname = {r["item"]: r["gguf tensor"] for r in sens["records"]}
+    stored = {(r["item"], r["option"]): r["stored type"] for r in sens["records"]}
     choice = dict(plan["linears"])
     for kind in ("embed", "head", "ple"):
         if plan.get(kind):
@@ -265,27 +331,35 @@ def build(args):
     over, want = [], {}
     for item, t in sorted(choice.items()):
         if item in gname:
-            want[gname[item]] = t.upper()
-            over += ["--tensor-type", f"^{re.escape(gname[item])}$={t.lower()}"]
+            want[gname[item]] = stored[item, t]
+            over += ["--tensor-type", f"^{re.escape(gname[item])}$={stored[item, t].lower()}"]
     out = w / f"plan_{Path(args.plan).stem}.gguf"
-    sh([BIN / "llama-quantize", "--imatrix", w / "imatrix.gguf", *over, w / "bf16.gguf", out, args.default])
+    if out.exists():
+        raise ValueError(f"output already exists: {out}")
+    sh([BIN / "llama-quantize", "--pure", "--imatrix", w / "imatrix.gguf", *over, w / "bf16.gguf", out, args.default])
     from gguf import GGUFReader  # the check: every tensor got the plan's type (llama.cpp falls back where a type cannot apply)
     got = {t.name: t.tensor_type.name for t in GGUFReader(str(out)).tensors}
     off = {n: (want[n], got.get(n)) for n in want if got.get(n) != want[n]}
     log(f"built {out} ({out.stat().st_size / 1e9:.3f} GB): {len(want) - len(off)} of {len(want)} tensors as planned; "
         f"different: {list(off.items())[:8]}")
+    if off:
+        raise ValueError(f"GGUF stored types differ from plan: {off}")
+    expected_bits = sum(r["bits"] for r in sens["records"] if choice.get(r["item"]) == r["option"])
+    actual_bits = 8 * sum(int(t.n_bytes) for t in GGUFReader(str(out)).tensors if t.name in want)
+    if actual_bits != expected_bits:
+        raise ValueError("GGUF controlled tensor sizes differ from measured plan")
     return out
 
 
 def evaluate(args):
     """llama-perplexity on WikiText-2 test and the mix: perplexity, and KL to the bf16 GGUF's logits."""
-    w = work(args.model)
+    w = work(args.model, args.work_dir)
     res = {}
-    tmp = Path("/tmp/kld")  # the base logits are large (tokens × vocabulary × 2 bytes): local disk, 64 chunks of 512 per text
+    tmp = w / "kld"
     tmp.mkdir(exist_ok=True)
     for text in ("wikitext_test", "mix_eval"):
         base_kld = tmp / f"base_{text}.kld"
-        common = ["-c", "512", "--chunks", "64", "-ngl", "999"]
+        common = ["-c", str(args.context), "--chunks", str(args.eval_chunks), "-ngl", "999"]
         if not base_kld.exists():
             sh([BIN / "llama-perplexity", "-m", w / "bf16.gguf", "-f", w / f"{text}.txt", *common, "--kl-divergence-base", base_kld])
         for f in args.files.split(","):
@@ -313,11 +387,22 @@ def inspect(args):
 
 
 def main():
+    global LLAMA, BIN
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("prepare", "measure", "build", "evaluate", "inspect"):
         s = sub.add_parser(name)
         s.add_argument("--model", required=True)
+        s.add_argument("--model-path", default="", help="exact local HF snapshot")
+        s.add_argument("--work-dir", default="")
+        s.add_argument("--llama-dir", default=str(LLAMA))
+        s.add_argument("--converter-python", default=sys.executable, help="isolated GGUF converter Python")
+        s.add_argument("--menu", default=",".join(MENU))
+        s.add_argument("--stock", default=",".join(STOCK), help="comma-separated baselines; empty skips them")
+        s.add_argument("--calib", type=int, default=64)
+        s.add_argument("--context", type=int, default=512)
+        s.add_argument("--eval-chunks", type=int, default=64)
+        s.add_argument("--kl-batch", type=int, default=4)
         s.add_argument("--dtype", default="float32")
         s.add_argument("--windows", type=int, default=16)
         s.add_argument("--plan", default="")
@@ -327,6 +412,8 @@ def main():
         s.add_argument("--out", default="")
         s.add_argument("--skip-pure", action="store_true", help="prepare: only the stock mixes (no type-everywhere files)")
     args = ap.parse_args()
+    LLAMA = Path(args.llama_dir).resolve()
+    BIN = LLAMA / "build/bin"
     {"prepare": prepare, "measure": measure, "build": build, "evaluate": evaluate, "inspect": inspect}[args.cmd](args)
 
 
