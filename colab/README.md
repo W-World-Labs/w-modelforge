@@ -52,7 +52,7 @@ with open('/content/model-forge/pilot.log', 'a', buffering=1) as log:
 
 选择3.8-27B时，将模型名改为 `Qwen/Qwen3.8-27B`。两模型均自动启用CPU卸载；9B保持FP32，27B使用BF16，默认生成batch分别为4与8。先串行完成一个模型及回传，再运行另一个。27B构建前要求至少130GB空闲磁盘；确认9B完成并通过rclone校验后，才清理本次运行的展开临时权重。
 
-工作目录为 `/content/model-forge/<run-id>/<model-name>/`。每阶段完成标记、状态和结果保存在 `output/`；大体积展开权重在 `work/`。不同实验使用不同run-id，避免混用完成标记。`--stage` 可单独选择 setup/calibrate/allocate/build/pack/evaluate/sync。
+工作目录为 `/content/model-forge/<run-id>/<model-name>/`。每阶段完成标记、状态和结果保存在 `output/`；大体积展开权重在 `work/`。不同实验使用不同run-id，避免混用完成标记。`--stage` 可单独选择 setup/calibrate/allocate/build/pack/evaluate/sync。已完成阶段重试时会跳过计算并重新校验回传；也可直接选择sync。
 
 ## 长执行和回传
 

@@ -209,6 +209,7 @@ def main():
         marker = OUTPUT / f"{stage}.done.json"
         if marker.exists():
             print("Already completed:", stage, flush=True)
+            sync()  # Retry backup even when this stage's computation already finished.
             continue
         started = time.time()
         save("status.json", {"stage": stage, "state": "running", "started_utc": started})
