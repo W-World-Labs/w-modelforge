@@ -1,28 +1,32 @@
 # W-ModelForge
 
-W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化与加速实验项目。我们在这里维护具体方案的适配、运行配方和实测结果，逐步比较压缩大小、质量、量化成本与推理表现。
+[中文说明](README.zh-CN.md)
 
-当前只有一种已接入的方法：**LookAtMyQuant**。先把实际方案跑通并记录结果，不提前设计插件框架或通用后端接口。
+W-ModelForge is [W-World-Labs](https://github.com/W-World-Labs)' experimental project for model compression and inference acceleration. We maintain practical adaptations, reproducible recipes and measured results covering artifact size, quality, build cost and inference behavior.
 
-| 方案 | 代码与来源 | 当前范围 |
+The first integrated method is **LookAtMyQuant**. The project uses a direct method directory and working scripts, without a plugin framework.
+
+| Method | Code and source | Current scope |
 | --- | --- | --- |
-| LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
+| LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/), from [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), MIT | Qwen3.5-9B / Qwen3.8-27B language PTQ: trellis coding, LDLQ, Hadamard processing, Fisher row allocation and upstream EMA codebooks, with CPU/GPU offload and shared decomposition reuse. |
 
-- [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
-- [`inference/`](inference/README.md)：下载与校验、完整多模态参考启动，以及标准 HF 导出、vLLM 和 llama.cpp 转换/启动脚本；后两者的后端质量和速度尚未实测。
-- [来源与改动](UPSTREAM.md)：固定源码基线、我们的修改和维护约定。
-- [版权与第三方说明](NOTICE.md) / [许可证](LICENSE)：代码、模型权重与数据的许可分别记录。
+- [Inference guide](inference/README.md): download/checksum and multimodal reference launch scripts, dense HF export, and optional vLLM / llama.cpp conversion and serving. External-engine quality and speed remain unmeasured.
+- [Colab workflow, Chinese](colab/README.md): Google's official hosted Colab MCP, reproducible execution, rclone copy and verification.
+- [Upstream and changes](UPSTREAM.md): fixed source baseline, downstream changes and maintenance rules.
+- [Third-party notices](NOTICE.md) / [license](LICENSE): separate terms for code, model weights and datasets.
 
-权重发布组织为 [Hugging Face / W-World-Labs](https://huggingface.co/W-World-Labs)。只有文件完整、packed 权重能够独立加载并完成实际推理、216题数学成绩保留原模型至少90%，且PPL/KL无明显异常的版本才公开；评测结果、模型来源、许可与加载范围随模型卡一起发布。
+Models are published under [Hugging Face / W-World-Labs](https://huggingface.co/W-World-Labs). Release requires file integrity, independent packed loading and actual inference, at least 90% relative correct-answer retention on the selected 216-problem math protocol, and PPL/KL review. Model cards disclose results, revisions, licenses and loading limits.
 
-## 当前进度
+## Current results
 
-2026-11-12：9B 语言权重已完成量化、独立加载和评估，并发布到 [W-World-Labs/Qwen3.5-9B-LAMQ2](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2)。packed 目录实测3.438 GB；1024-token上限下数学216题原始83、packed80（相对保留96.39%），分别131/133题被截断，不能视为广泛能力保留率。额外短窗口PPL为22.81→32.07，主WikiText KL为0.331；完整结果与限制见模型卡。
+As of 2026-11-12, [Qwen3.5-9B-LAMQ2](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2) is public. Its language packed directory is **3.438 GB**. At a 1024-token generation cap, original / packed scores are **83 / 80 correct out of 216**, or **96.39% relative retention**; **131 / 133** responses hit the cap. This length-limited synthetic-arithmetic result does not establish broad capability retention. Additional short-window PPL rises from **22.81 to 32.07**; primary WikiText KL is **0.331**. See the model card for full results and limitations.
 
-3.8-27B语言packed已完成，实测9.643 GB、8文件，独立网盘备份校验零差异；正在做1024-token上限的原始/packed数学评估，尚未公开。按当前需求，语言权重量化，视觉编码器和merger/projector保留原始BF16：两模型各333个视觉张量已原样提取并备份。9B完整多模态版本已公开，含原始BF16视觉及processor共约4.374 GB；逐视觉张量字节hash全相同，图文例子答red/blue，语言固定窗口KL约1.205e-11、top1及四条贪心提示一致。27B将在语言评估后验证多模态。尚无总体推理加速结论。
+Only language weights are quantized. The original **BF16 visual encoder and merger/projector** are preserved: all 333 visual tensors from each source model have been extracted unchanged and backed up. The complete public 9B release is approximately **4.374 GB**, including original vision and processor assets. Actual loading matches every visual tensor's original byte hash, answers `red` / `blue` for two basic images, and matches the dense quantized language reference (KL approximately 1.205e-11, identical top-1 predictions and four short greedy prompts).
 
-当前配方只量化语言权重，不含蒸馏；视觉组件保持原始BF16。语言产物为原方案自定义 packed 格式，不是 GGUF 或标准 Transformers 权重；多模态路径正在验证，编码、工具调用和视频质量尚未评估。上游的4B成绩只在方法文档中作为来源背景保留，不能当作 W-ModelForge 的结果。
+Qwen3.8-27B language packing is complete: **9.643 GB across 8 files**, with independent Drive backup verified without differences. Matched original / packed math evaluation at 1024 tokens and subsequent multimodal validation are pending; **27B remains private**.
 
-## 来源
+The recipe is PTQ without distillation or QAT. Language weights use the upstream custom packed format, rather than GGUF or standard Transformers weights. The reference loader expands weights into a dense model; **packed download size is not inference VRAM usage**. No general inference-speed improvement is established. Coding, tool use and video quality are unbenchmarked. Upstream 4B results are attributed background, not W-ModelForge results.
 
-这个仓库保留了 LookAtMyQuant 的 Git 提交历史和 GitHub fork 关系，以便追溯首个方法的来源；**W-ModelForge 的项目范围包括后续其他量化与加速方案**。LookAtMyQuant 编译器、原始配方、缓存码本和历史实验归原作者 Shin Megami Boson。我们的修改另列于 [UPSTREAM.md](UPSTREAM.md)，不表示上游作者或 Qwen 的背书。
+## Attribution
+
+This repository retains LookAtMyQuant's Git history and GitHub fork relationship for traceability. **W-ModelForge's broader scope includes other compression and acceleration methods.** The original compiler, recipes, cached codebooks and historical experiments belong to Shin Megami Boson. Our changes are listed in [UPSTREAM.md](UPSTREAM.md); no endorsement by the original author or Qwen is implied.
