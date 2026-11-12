@@ -13,6 +13,7 @@ another cap. Optional rclone copies/checks only those three small JSON reports.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -34,11 +35,25 @@ SOURCES = ("compare_math_caps.py", "math_eval.py", "math_bench.py", "row_allocat
            "load_packed.py", "compiler_artifact.py", "opgraph/hadamard.py")
 SCHEDULE = {"Qwen/Qwen3.8-27B": ("bfloat16", 8, [2048, 4096]),
             "Qwen/Qwen3.5-9B": ("float32", 4, [4096])}
+LEGACY_DRIVER_SHA256 = "6e5e12cf179288dc63a5282090a5cf0db7b345e90b81b4a62c8fdcb15a0c665b"  # 3e08e36
 
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                      ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def compatible_common(saved, current):
+    """Allow only the known JSON-validation repair; all generation inputs stay exact."""
+    if saved == current:
+        return True
+    if not isinstance(saved, dict) or not isinstance(current, dict):
+        return False
+    left, right = copy.deepcopy(saved), copy.deepcopy(current)
+    old_driver = left.get("source_sha256", {}).pop("compare_math_caps.py", None)
+    new_driver = right.get("source_sha256", {}).pop("compare_math_caps.py", None)
+    allowed = {LEGACY_DRIVER_SHA256, file_sha256(SOURCE / "compare_math_caps.py")}
+    return left == right and {old_driver, new_driver} == allowed
 
 
 def hashed_files(root, names):
@@ -72,7 +87,7 @@ def model_weights(root, kind):
 def validate_report(report, common, problems, scorer, summarize, kind):
     fingerprint = report["fingerprint"]
     if (report.get("schema") != 1 or report.get("kind") != kind
-            or fingerprint["common"] != common
+            or not compatible_common(fingerprint["common"], common)
             or report.get("fingerprint_sha256") != digest(fingerprint)
             or report.get("state") not in ("running", "completed")):
         raise ValueError(f"{kind} report fingerprint/schema differs; refusing to overwrite")
@@ -112,6 +127,7 @@ def validate_report(report, common, problems, scorer, summarize, kind):
             if (row["correct"], row["answer"]) != (correct, answer):
                 raise ValueError(f"{kind}/{cap}: saved score differs for {key}")
         expected = summarize([by_id[key] for key in ordered[:n]], rows) if n else None
+        expected = json.loads(json.dumps(expected))  # JSON turns integer difficulty keys into strings.
         if saved["summary"] != expected:
             raise ValueError(f"{kind}/{cap}: summary differs from saved rows")
         unfinished |= n < len(problems)
@@ -121,11 +137,17 @@ def validate_report(report, common, problems, scorer, summarize, kind):
 
 def comparison(output, reports, common):
     result = {"schema": 1, "state": "running", "common": common,
-              "common_sha256": digest(common), "reports": {}, "caps": {}}
+              "common_sha256": digest(common), "reports": {}, "caps": {},
+              "driver_compatibility": {
+                  "legacy_sha256": LEGACY_DRIVER_SHA256,
+                  "current_sha256": file_sha256(SOURCE / "compare_math_caps.py"),
+                  "note": "JSON validation fix only; generation/scoring/loader files must match exactly. "
+                          "Each report keeps its true initial fingerprint and driver SHA256."}}
     for kind, report in reports.items():
         result["reports"][kind] = {"file": f"{kind}.json",
                                    "sha256": file_sha256(output / f"{kind}.json"),
-                                   "fingerprint_sha256": report["fingerprint_sha256"]}
+                                   "fingerprint_sha256": report["fingerprint_sha256"],
+                                   "driver_sha256": report["fingerprint"]["common"]["source_sha256"]["compare_math_caps.py"]}
     for cap in common["max_new_tokens"]:
         item = {}
         for kind in ("original", "packed"):
@@ -259,11 +281,15 @@ def main():
         old_comparison = args.output / "comparison.json"
         if old_comparison.exists():
             old = json.loads(old_comparison.read_text())
-            if old.get("common") != common or any(kind not in reports for kind in old.get("reports", {})):
+            if not compatible_common(old.get("common"), common) or any(kind not in reports for kind in old.get("reports", {})):
                 raise ValueError("comparison fingerprint/source report differs; refusing to overwrite")
         report = reports.get(args.kind)
-        if report is not None and report["fingerprint"] != fingerprint:
-            raise ValueError("model weights/config/source fingerprint changed; refusing to overwrite")
+        if report is not None:
+            saved = report["fingerprint"]
+            if (not compatible_common(saved["common"], fingerprint["common"])
+                    or {k: v for k, v in saved.items() if k != "common"}
+                    != {k: v for k, v in fingerprint.items() if k != "common"}):
+                raise ValueError("model weights/config/source fingerprint changed; refusing to overwrite")
         if report is None:
             report = {"schema": 1, "kind": args.kind, "state": "running",
                       "fingerprint": fingerprint, "fingerprint_sha256": digest(fingerprint),

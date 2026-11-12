@@ -103,7 +103,7 @@ python methods/lookatmyquant/compare_math_caps.py --kind packed --model-id Qwen/
 # --dtype float32 --batch 4 --max-new 4096 and a separate output directory.
 ```
 
-Reports contain full generated text, scores and truncations. They are atomically saved after each complete batch; rerunning identical arguments resumes only when protocol, model, source, assets and runtime fingerprints match. Optional `--rclone-remote mydrive:project/math-caps27` copies/checks only original.json, packed.json and comparison.json after each batch. Use a dedicated remote subdirectory; logs/locks stay outside the output directory. These are quality comparisons, not isolated throughput benchmarks.
+Reports contain full generated text, scores and truncations. They are atomically saved after each complete batch; rerunning identical arguments resumes only when protocol, model, source, assets and runtime fingerprints match. Optional `--rclone-remote mydrive:project/math-caps27` copies/checks only original.json, packed.json and comparison.json after each batch. Use a dedicated remote subdirectory; logs/locks stay outside the output directory. One explicitly allowlisted JSON-validation-only driver repair is compatible with the initial `3e08e36` driver; model assets and generation/scoring/loader hashes stay exact, and each report retains its real initial driver fingerprint. These are quality comparisons, not isolated throughput benchmarks.
 
 ## Sources and licenses
 

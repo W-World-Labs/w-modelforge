@@ -103,7 +103,7 @@ python methods/lookatmyquant/compare_math_caps.py --kind packed --model-id Qwen/
 # --dtype float32 --batch 4 --max-new 4096，以及独立输出目录。
 ```
 
-每批原子保存生成全文、分数和截断信息；同参数重启时，仅在协议、模型、源码、文本资产和运行环境指纹全部一致时续跑。可选加 `--rclone-remote mydrive:project/math-caps27`，每批只复制并校验original.json、packed.json、comparison.json三个小文件；目标子目录应专用，日志/锁留在输出目录之外。本流程评估质量，不是独占资源的吞吐基准。
+每批原子保存生成全文、分数和截断信息；同参数重启时，仅在协议、模型、源码、文本资产和运行环境指纹全部一致时续跑。可选加 `--rclone-remote mydrive:project/math-caps27`，每批只复制并校验original.json、packed.json、comparison.json三个小文件；目标子目录应专用，日志/锁留在输出目录之外。 针对初版`3e08e36`仅有一项明确白名单的JSON校验修复兼容；模型资产及生成、打分、loader哈希仍严格一致，每份报告保留真实初始驱动指纹。本流程评估质量，不是独占资源的吞吐基准。
 
 ## 来源与许可
 
