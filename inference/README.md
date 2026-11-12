@@ -93,6 +93,6 @@ LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
 
 ## 来源与许可
 
-脚本和 `export_hf.py` 为 W-World-Labs 的 MIT 代码，复用 Shin Megami Boson / LookAtMyQuant 的 MIT packed 解码，详见仓库 [NOTICE](../NOTICE.md)。模型沿用 Qwen 权重的 Apache-2.0 许可。vLLM（Apache-2.0）和 llama.cpp（MIT）是外部依赖，没有将其源码并入本项目。
+脚本和 `export_hf.py` 为 W-World-Labs 的 MIT 代码，复用 Shin Megami Boson / LookAtMyQuant 的 MIT packed 解码，详见仓库 [NOTICE](https://github.com/W-World-Labs/w-modelforge/blob/main/NOTICE.md)。模型沿用 Qwen 权重的 Apache-2.0 许可。vLLM（Apache-2.0）和 llama.cpp（MIT）是外部依赖，没有将其源码并入本项目。
 
 后端依据：[vLLM 支持列表](https://docs.vllm.ai/en/stable/models/supported_models/)、[服务参数](https://docs.vllm.ai/en/stable/cli/serve/)、[Qwen3.5 GDN 实现](https://github.com/vllm-project/vllm/blob/9e6815acab1a6acb188931510271b1bce4688c75/vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py#L942)、[llama.cpp Qwen 转换](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/conversion/qwen.py#L694)、[视觉转换](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/conversion/qwen3vl.py#L16)。这些是上游格式和架构支持的证据，不是本项目的后端实测报告。
