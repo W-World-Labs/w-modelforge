@@ -12,5 +12,6 @@ colab/STATUS.json
 *.pt
 *.safetensors
 *.gguf
+weights.bin
 *.log
 !methods/lookatmyquant/results/completeness_*.log

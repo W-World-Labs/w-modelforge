@@ -64,9 +64,13 @@ MCP前端可能约600秒断开HTTP连接，运行进程仍可能继续。先下�
 
 脚本每阶段执行 `rclone copy` 与 `rclone check --one-way`；复制结果到 `<remote>:<directory>/<model-name>-LAMQ2-<run-id>`。产物包含源码/模型版本、环境、配方、许可证、修改说明和质量结果。完成评估及回传后释放本次GPU；脚本不保留或使用云端OAuth凭据来管理运行时。
 
+大权重通过rclone回传网盘，再用本机rclone读取；MCP文件下载用于日志和小结果。下载到本机的packed目录还应通过 `compiler_artifact.inspect_artifact` 校验全部张量哈希，之后再进行发布。
+
 ## 配方与边界
 
 128道MATH训练题自生成解答，最多1024新token；12个512-token窗口测Fisher，32个1024-token窗口做量化校准。线性层目标为2.7 bpw，2/3/4bit行级分配采用Fisher加权 `4^-bits` 代理；嵌入和独立输出头用lm4。trellis L12、输入Hadamard、LDLQ、数字token权重和QEP α=0.5，使用上游缓存EMA码本。
+
+本配方 `--calib-math 1.0` 使线性层校准全部使用自生成MATH窗口；英／中／代码文本混合源用于词频统计和留出文本评估。
 
 WikiText-2和英/中/代码留出窗口评估PPL/KL，另用上游独立216题集评估原始与量化模型。没有蒸馏；1024-token上限不能与原帖2048-token数学成绩直接比较。当前只量化文本部分。`packed/artifact.json` 和 `weights.bin` 是上游自定义格式；展开的dense.pt不代表压缩大小，尚未声称packed推理与展开权重的logits一致。
 
