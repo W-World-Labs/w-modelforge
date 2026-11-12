@@ -254,11 +254,18 @@ def main():
                         python("row_allocation.py", "pack", "--source-dir", SOURCE, "--model-path", model_dir,
                                "--trial-dir", WORK, "--codes", WORK / "codes.pt", "--output", OUTPUT / "packed")
                 elif stage == "evaluate":
-                    python("math_eval.py", "--model-path", model_dir, "--models", f"orig,dense:{WORK / 'dense.pt'}",
+                    evaluation_args = ("--dtype", DTYPE,
+                                       "--cache-tag", MODEL.split("/")[-1].lower() if CPU_OFFLOAD else "qwen35",
+                                       "--batch", 8 if is_27b else 4, "--max-new", "1024")
+                    python("release_validation.py", "--phase", "reference", "--model-path", model_dir,
+                           "--dense", WORK / "dense.pt", "--work-dir", WORK / "release",
+                           "--out", OUTPUT / "release-reference.json", *evaluation_args)
+                    python("math_eval.py", "--model-path", model_dir, "--models", "orig",
                            "--problems-file", SOURCE / "results/protocols/math216.json", "--no-thinking",
-                           "--batch", 8 if is_27b else 4, "--max-new", "1024", *dtype_args,
-                           *(["--cache-tag", MODEL.split("/")[-1].lower()] if CPU_OFFLOAD else []),
-                           "--out", OUTPUT / "math216.json")
+                           *evaluation_args, "--out", OUTPUT / "math216.json")
+                    python("release_validation.py", "--phase", "packed", "--packed", OUTPUT / "packed",
+                           "--work-dir", WORK / "release", "--baseline-math", OUTPUT / "math216.json",
+                           "--out", OUTPUT / "release-validation.json", *evaluation_args)
             save(marker.name, {"seconds": round(time.time() - started)})
             save("status.json", {"stage": stage, "state": "completed", "seconds": round(time.time() - started)})
             sync()
