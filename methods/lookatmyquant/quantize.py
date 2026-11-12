@@ -63,6 +63,8 @@ WikiText-2: calibration on 64 random training windows of 512 tokens, perplexity 
     HF_HUB_OFFLINE=1 python quantize.py --program lm4x --out results/qwen35/lm4x.json
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import argparse
@@ -329,7 +331,7 @@ def _has_hadamard(n):
         return False
 
 
-def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None):
+def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None, input_cache=None):
     """One matrix's quantized program (an opgraph Net) for its target W and input statistics H."""
     fam, b, _ = parse(program)
     if fam == "fp":  # the checkpoint's bfloat16 values, exactly
@@ -344,7 +346,7 @@ def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None):
         return N.nested_words([W], H, [seed], b, [b], 0.4, [1.0], N.lloyd_max(b), in_seed=in_seed, out_rot=out_rot, G=G)[b][0]
     if fam == "ter":
         return N.nested_words([W], H, [seed], 2, [2], 0.4, [1.0], N.lloyd_max_levels(b), in_seed=in_seed, out_rot=out_rot)[2][0]
-    return C.ldlq_words([W], H, trellis[b], [seed], in_seed=in_seed, out_rot=out_rot)[0]
+    return C.ldlq_words([W], H, trellis[b], [seed], in_seed=in_seed, out_rot=out_rot, input_cache=input_cache)[0]
 
 
 def embedding_buckets(V, first=256):
@@ -504,10 +506,19 @@ def trellis_states(values, table):
     t = table.double().flatten()
     st, order = t.sort()
     v = values.double().contiguous()
-    pos = torch.searchsorted(st, v).clamp(1, len(st) - 1)
-    pos = torch.where((v - st[pos - 1]).abs() <= (st[pos] - v).abs(), pos - 1, pos)
-    assert float((st[pos] - v).abs().max()) < 1e-9, "a trellis value not in its table"
-    return order[pos].to(torch.int16)
+    # Preserve CPU sort/tie order and FP64 comparisons; only independent lookup
+    # chunks run on CUDA, and the compact integer result returns to the CPU.
+    dev = DEV if C.GPU_SWEEP and DEV == "cuda" else "cpu"
+    levels, indices = st.to(dev), order.to(dev)
+    flat = v.reshape(-1)
+    states = torch.empty(flat.shape, dtype=torch.int16, device="cpu")
+    for start in range(0, flat.numel(), 1 << 22):
+        chunk = flat[start:start + (1 << 22)].to(dev)
+        pos = torch.searchsorted(levels, chunk).clamp(1, len(levels) - 1)
+        pos = torch.where((chunk - levels[pos - 1]).abs() <= (levels[pos] - chunk).abs(), pos - 1, pos)
+        assert float((levels[pos] - chunk).abs().max()) < 1e-9, "a trellis value not in its table"
+        states[start:start + len(chunk)] = indices[pos].to(device="cpu", dtype=torch.int16)
+    return states.reshape(v.shape)
 
 
 def trellis_code_entry(net, shape, bits, in_seed):
@@ -958,6 +969,7 @@ def main():
     ap.add_argument("--data", choices=["wikitext", "mix"], default="wikitext", help="calibration text (and token frequencies)")
     ap.add_argument("--eval-mix", type=int, default=0, help="held-out windows per text-mix source to evaluate (0: 8 with --data mix)")
     ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
+    ap.add_argument("--cpu-offload", action="store_true", help="keep both plan builds in CPU memory, staging one decoder layer at a time on CUDA")
     ap.add_argument("--stream-cancel", type=float, default=0.0, help="cross-term programs: fit the last matrix of each residual branch to also cancel this share of the error already in the stream")
     ap.add_argument("--output-shaping", action="store_true", help="Lloyd–Max words: also shape each matrix's rounding error toward outputs that matter less (needs --rot in-shared)")
     ap.add_argument("--trellis-rows", default="", help="width,look: run trellis paths along each row, settling width columns at a time and looking look columns ahead")
@@ -988,6 +1000,10 @@ def main():
     ap.add_argument("--save-codes", default="", help="keep a scalar-coded build's codes, levels, row scales and rotations here, for finetune.py (needs --rot in-shared)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    if args.cpu_offload and (DEV != "cuda" or args.program != "plan" or args.rotation != "none"
+                            or args.ft_epochs or args.gauges or args.gsq_steps or args.output_shaping
+                            or args.token_weights not in ("", "digits", "results")):
+        ap.error("--cpu-offload supports CUDA plan PTQ without whole-model rewrites or gradient-based calibration")
     if args.skip_eval and (args.program in ("orig", "dense") or args.check_only or args.tasks or args.calib_kl):
         ap.error("--skip-eval cannot be combined with evaluation-only modes, --check-only, --tasks or --calib-kl")
     if args.row_plan:
@@ -1026,12 +1042,12 @@ def main():
     if json.loads((Path(path) / "config.json").read_text()).get("quantization_config", {}).get("quant_method") == "mxfp4":
         from transformers import Mxfp4Config  # gpt-oss ships MXFP4 experts: the reference is their dequantized values
         qcfg = {"quantization_config": Mxfp4Config(dequantize=True)}
-    ref = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, **qcfg).to(DEV).eval()
+    ref = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, **qcfg).to("cpu" if args.cpu_offload else DEV).eval()
     for p in ref.parameters():
         p.requires_grad_(False)
     qwen35 = "qwen3_5" in ref.config.model_type
     name = repo.split("/")[-1]
-    tag = "qwen35" if qwen35 else name.lower()  # the token caches: one per tokenizer
+    tag = "qwen35" if qwen35 and not args.cpu_offload else name.lower()  # keep the 3.8 tokenizer's caches separate
     assert qwen35 or args.rotation == "none", "the rotation is written for Qwen3.5's norms"
     tests = {}
     if not args.skip_eval:
@@ -1131,6 +1147,53 @@ def main():
     token_w = token_weights("digits" if args.token_weights == "guided" else args.token_weights, ref, chunks, args.token_gamma, floor=args.token_floor, tok=tok) if args.token_weights else None
     token_w = None if token_w is None else tuple(w.to(DEV) for w in token_w)  # on the GPU once, not copied for every matrix
     model = copy.deepcopy(ref)
+    offload_pinned = set()
+    offload_modules = {}
+    if args.cpu_offload:
+        # Hooks are installed after deepcopy so each model owns its own module objects.
+        # always_call also returns a module to CPU when the capture hooks raise Stop.
+        def stage_in(module, _args):
+            module.to(DEV)
+
+        def stage_out(module, _args, _output):
+            if id(module) not in offload_pinned:
+                module.to("cpu")
+
+        for mm in (ref, model):
+            layer_path, decoder = A.decoder_layers(mm)
+            parent = mm.get_submodule(layer_path.rsplit(".", 1)[0])
+            embedding, output, _ = A.head_and_embedding(mm)
+            modules = [embedding, *decoder, parent.norm, output]
+            seen = set()
+            for module in modules:
+                if module is not None and id(module) not in seen:
+                    seen.add(id(module))
+                    module.register_forward_pre_hook(stage_in)
+                    module.register_forward_hook(stage_out, always_call=True)
+            offload_modules[id(mm)] = seen
+
+    def bulk_forward(label, mm, callback, *values):
+        if not args.cpu_offload:
+            return callback(mm, *values)
+        if offload_pinned:
+            raise RuntimeError("bulk statistics cannot run while quantization layers are pinned")
+        started, completed = time.time(), False
+        log(f"  statistics {label}: starting with one model on GPU")
+        pins = offload_modules[id(mm)]
+        offload_pinned.update(pins)
+        try:
+            for other in (ref, model):
+                if other is not mm:
+                    other.to("cpu")
+            mm.to(DEV)
+            result = callback(mm, *values)
+            completed = True
+            return result
+        finally:
+            mm.to("cpu")
+            offload_pinned.difference_update(pins)
+            torch.cuda.empty_cache()
+            log(f"  statistics {label}: {'completed' if completed else 'failed'} ({time.time() - started:.1f}s)")
     if args.weights_from:  # quantize weights trained at a wider width, toward the original's outputs
         from math_eval import load_dense
         res["weights from"] = {"path": args.weights_from, **load_dense(model, args.weights_from)}
@@ -1259,7 +1322,7 @@ def main():
             freq = freq.clone()
             freq[sorted(tok.added_tokens_decoder)] = math.inf
         order = torch.sort(-freq, stable=True).indices
-        H_out = head_inputs(ref, chunks)
+        H_out = bulk_forward("head inputs", ref, head_inputs, chunks)
         if plan.get("embed"):
             pname = {id(p_): n for n, p_ in model.named_parameters()}
             b_, n_ = quantize_embedding(emb.weight, plan["embed"], embedding_environment(H_out, "both" if tied else "lookup"), order, name=pname[id(emb.weight)])
@@ -1293,8 +1356,8 @@ def main():
         for h_ in hooks:
             h_.remove()
         return out
-    kwr = layer_args(ref)
-    kwq = layer_args(model)  # its own: per-layer inputs through its quantized tables, and its own shared-KV dictionaries
+    kwr = bulk_forward("reference layer arguments", ref, layer_args)
+    kwq = bulk_forward("quantized layer arguments", model, layer_args)  # its own inputs and shared-KV dictionaries
 
     def first_input(m, a, k):
         raise Stop(a[0] if a else k["hidden_states"])
@@ -1313,11 +1376,11 @@ def main():
     hq = layer0_inputs(model if bits_e else ref)  # through the quantized embedding when there is one
     hr = (layer0_inputs(ref) if bits_e else [h.clone() for h in hq]) if keep_ref else None
 
-    def best_word(p, target, H, seed, in_seed=None, out_rot=True, G=None):
+    def best_word(p, target, H, seed, in_seed=None, out_rot=True, G=None, input_cache=None):
         """The program's word; with --seeds, the randomized Hadamard seed (an exact choice) with the least H-weighted error."""
         tr = trellis_for(target.shape[0])
         if args.seeds <= 1 or H is None or parse(p)[0] not in ("tr", "lm"):
-            return word(p, target, H, seed, tr, in_seed, out_rot, G)
+            return word(p, target, H, seed, tr, in_seed, out_rot, G, input_cache)
         best = None
         for t in range(args.seeds):
             net = word(p, target, H, seed + 7919 * t, tr)
@@ -1409,6 +1472,10 @@ def main():
         ps = [prog(i, n) for n in names]
         x_stage = any(parse(p)[2] for p in ps)
         H = M = None
+        # One stage shares H and its input seed across matrices and row groups.
+        # Never retain weight targets, row scales, Viterbi state or sweep state here.
+        trellis_cache = {} if args.rot == "in-shared" and args.seeds == 1 else None
+        trellis_calls = 0
         if any(parse(p)[0] not in DATA_FREE for p in ps):  # the stage's input statistics, from the stream it will see (and the reference)
             n_in = mods[0].in_features
             H = torch.zeros(n_in, n_in, device=DEV)
@@ -1528,7 +1595,10 @@ def main():
                           ((order[:n_move], k_ + 1), (order[n_move:len(imp) - n_move], k_), (order[len(imp) - n_move:], k_ - 1)) if len(rows)]
             if groups is not None:
                 def round_group(rows, bits):
-                    return best_word(re.sub(r"\d+", str(bits), p, count=1), target[rows], H, seed, in_seed, False)
+                    nonlocal trellis_calls
+                    trellis_calls += 1
+                    return best_word(re.sub(r"\d+", str(bits), p, count=1), target[rows], H, seed, in_seed, False,
+                                     input_cache=trellis_cache)
                 Wq, rate, entry = quantize_row_groups(target, groups, round_group, in_seed, CODES is not None or capture_this)
                 mod.weight.data = Wq.to(mod.weight.dtype).to(DEV)
                 if CODES is not None:
@@ -1565,6 +1635,8 @@ def main():
         for name in stage.get("keep", []):  # small linears: kept at 16 bits, counted
             bits_ += 16 * L.get_submodule(name).weight.numel()
             n_ += L.get_submodule(name).weight.numel()
+        if trellis_calls and trellis_cache is not None:
+            log(f"    layer {i} {names[0]}: input environments {len(trellis_cache)}, reused {trellis_calls - len(trellis_cache)} times")
         return bits_, n_
 
     def expert_programs(i, name, E):
@@ -1626,6 +1698,10 @@ def main():
     for i in range(n_layers):
         t0 = time.time()
         L, Lr = layers[i], rlayers[i]
+        if args.cpu_offload:
+            offload_pinned.update((id(L), id(Lr)))
+            L.to(DEV)
+            Lr.to(DEV)
         blocks = {}
         for st in stages_of[i]:
             blocks.setdefault((st.get("names") or st.get("keep") or [st.get("name")])[0].split(".")[0], []).append(st)
@@ -1682,6 +1758,11 @@ def main():
             hq = [run_layer(L, h, kwq[i][c]) for c, h in enumerate(hq)]
             if keep_ref:
                 hr = [run_layer(Lr, h, kwr[i][c]) for c, h in enumerate(hr)]
+        if args.cpu_offload:
+            offload_pinned.difference_update((id(L), id(Lr)))
+            L.to("cpu")
+            Lr.to("cpu")
+            torch.cuda.empty_cache()
         timing.append(round(time.time() - t0, 1))
         if args.library and library:  # this layer's other widths, then out of memory
             Path(args.library).mkdir(parents=True, exist_ok=True)
@@ -1722,7 +1803,8 @@ def main():
         log(f"  exported {len(EXPORT.meta['matrices'])} matrices and {len(EXPORT.meta['tables'])} tables to {out}")
     if args.save:  # preserve every changed parameter's actual evaluated values and dtype
         rp = dict(ref.named_parameters())
-        changed = {n: p_.detach().cpu().clone() for n, p_ in model.named_parameters() if n in rp and not torch.equal(p_, rp[n])}
+        changed = {n: (p_.detach() if args.cpu_offload else p_.detach().cpu().clone())
+                   for n, p_ in model.named_parameters() if n in rp and not torch.equal(p_, rp[n])}
         Path(args.save).parent.mkdir(parents=True, exist_ok=True)
         torch.save({"params": changed, "text weights": res["text weights"], "program": args.program, "plan": args.plan}, args.save)
         log(f"  saved {len(changed)} quantized tensors to {args.save}")

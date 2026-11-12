@@ -8,6 +8,8 @@ log2(AM/GM) is the bits per weight that per-row widths are worth at the same cos
     python row_importance.py --out results/row_importance.json     (run_batch.py: lm2RowImportance)
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import argparse
@@ -35,13 +37,14 @@ def main():
     ap.add_argument("--windows", default="/root/.cache/huggingface/retrain/math_long_q35.pt")
     ap.add_argument("--n", type=int, default=24)
     ap.add_argument("--len", type=int, default=1024)
+    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     ap.add_argument("--skip-calib", type=int, default=0, help="leave out the windows a build calibrates on: this many from the front of its order (quantize.py --calib-math)")
     ap.add_argument("--save", default="/root/.cache/huggingface/retrain/row_importance.pt")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     t0 = time.time()
     tok = AutoTokenizer.from_pretrained(args.model_path)
-    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
+    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
     for p in model.parameters():
         p.requires_grad_(False)
     path, layers = A.decoder_layers(model)
@@ -82,7 +85,7 @@ def main():
             log(f"  {i + 1}/{len(w)} windows, {n_digit} digit positions ({time.time() - t0:.0f}s)")
     for h in hooks:
         h.remove()
-    res = {"windows": len(w), "length": args.len, "digit positions": n_digit, "matrices": {}}
+    res = {"windows": len(w), "length": args.len, "dtype": args.dtype, "digit positions": n_digit, "matrices": {}}
     saved, all_imp = {}, []
     for k in mods:
         imp = (gg[k] * yy[k]).clamp_min(1e-30)

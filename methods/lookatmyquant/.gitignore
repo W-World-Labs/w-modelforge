@@ -1,0 +1,24 @@
+__pycache__/
+.DS_Store
+.wrangler/
+cache/*
+!cache/codes/
+cache/codes/*
+*.pt
+*.safetensors
+*.gguf
+*.log
+!results/completeness_*.log
+runtime_mlx/ref/
+!cache/codes/trellis_L12_k[1-4]_T256_s0_ema.pt
+
+# Local Colab identities, run state, artifacts and credentials
+.venv/
+.colab-state*.json
+.colab-state*.json.tmp
+colab/runs/
+colab/STATUS.json
+colab/.colab-state*.json
+colab/*rclone*.conf
+.env
+.env.*

@@ -6,6 +6,8 @@ problems, thinking off, up to --max-new tokens each, cut into windows of --len t
 --math-sources is a Hugging Face cache that holds EleutherAI/hendrycks_math.
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import argparse
@@ -71,13 +73,14 @@ def main():
     ap.add_argument("--max-new", type=int, default=2048)
     ap.add_argument("--len", type=int, default=2048)
     ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     t0 = time.time()
     tok = AutoTokenizer.from_pretrained(args.model_path, padding_side="left")
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
+    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
     prompts = math_prompts(tok, args.math_sources)[args.skip : args.skip + args.problems]
     w = solved(model, tok, prompts, args.len, batch=args.batch, max_new=args.max_new, note="long solutions")
     w = w[torch.randperm(len(w), generator=torch.Generator().manual_seed(0))]

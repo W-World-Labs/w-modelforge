@@ -8,6 +8,8 @@ immutable shared views; they are separate from tied model-state aliases.
 Imports stay lightweight so the allocator can price shapes without torch/MLX.
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import hashlib
@@ -419,7 +421,8 @@ def export_saved_codes(saved, out, *, dense_tensors, model_dir=None):
     assets = {}
     if model_dir is not None:
         for name in ('config.json', 'generation_config.json', 'tokenizer.json', 'tokenizer_config.json',
-                     'special_tokens_map.json', 'chat_template.jinja', 'tokenizer.model'):
+                     'special_tokens_map.json', 'chat_template.jinja', 'tokenizer.model',
+                     'LICENSE', 'LICENSE.txt', 'NOTICE', 'NOTICE.txt'):
             source = Path(model_dir) / name
             if source.exists():
                 assets[name] = source

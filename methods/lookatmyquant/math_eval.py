@@ -11,6 +11,8 @@
     python math_eval.py --models orig,dense:build/dense.pt --no-thinking --out results/math.json     (run_batch.py: lm2Math)
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import argparse
@@ -247,6 +249,8 @@ def main():
     ap.add_argument("--per-cell", type=int, default=15)
     ap.add_argument("--max-new", type=int, default=2048)
     ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
+    ap.add_argument("--cache-tag", default="qwen35", help="token cache namespace; use a separate tag for a different tokenizer")
     ap.add_argument("--no-thinking", action="store_true", help="the chat template's empty thinking block: the model reasons in its answer")
     ap.add_argument("--ids-file", default="", help="a JSON list of problem ids: only these")
     ap.add_argument("--problems-file", default="", help="a JSON file whose \"problems\" are math_bench problems to use instead of generating them (e.g. a fresh frozen set)")
@@ -267,17 +271,17 @@ def main():
     if args.ids_file:
         keep = set(json.loads(Path(args.ids_file).read_text()))
         problems = [p for p in problems if p["id"] in keep]
-    ids = token_ids(tok, "validation")
+    ids = token_ids(tok, "validation", args.cache_tag)
     wins = ids[: len(ids) // 512 * 512].reshape(-1, 512)
     wins = wins[torch.randperm(len(wins), generator=torch.Generator().manual_seed(0))[:16]]
-    res = {"device": DEV, "problems": len(problems), "max new tokens": args.max_new, "greedy": args.temperature == 0, "thinking": not args.no_thinking, "models": {}}
+    res = {"device": DEV, "dtype": args.dtype, "problems": len(problems), "max new tokens": args.max_new, "greedy": args.temperature == 0, "thinking": not args.no_thinking, "models": {}}
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     ref_lp = None
     all_rows = {}
     for spec in args.models.split(","):
         kind, _, what = spec.partition(":")
-        model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
+        model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
         for p in model.parameters():
             p.requires_grad_(False)
         if ref_lp is None:

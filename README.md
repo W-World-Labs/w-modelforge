@@ -1,158 +1,23 @@
-# LookAtMyQuant
+# W-ModelForge
 
-LookAtMyQuant is a quantization compiler. It measures how much each stored piece of a model hurts the output when compressed. It then picks a code for each piece so the whole model fits a size budget with the least damage.
+W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化与加速实验项目。我们在这里维护具体方案的适配、运行配方和实测结果，逐步比较压缩大小、质量、量化成本与推理表现。
 
-On Gemma 4 E2B, its GGUF has 12× lower KL than Q4_K_M at the same file size. The method and every result are on [the site](https://lookatmyquant.pages.dev).
+当前只有一种已接入的方法：**LookAtMyQuant**。先把实际方案跑通并记录结果，不提前设计插件框架或通用后端接口。
 
-The code is under the MIT license.
+| 方案 | 代码与来源 | 当前范围 |
+| --- | --- | --- |
+| LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
 
-## LookAtMyQuant 2: Qwen3.5-4B in 1.2 GB
+- [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
+- [来源与改动](UPSTREAM.md)：固定源码基线、我们的修改和维护约定。
+- [版权与第三方说明](NOTICE.md) / [许可证](LICENSE)：代码、模型权重与数据的许可分别记录。
 
-[LookAtMyQuant 2](https://lookatmyquant2.pages.dev) takes Qwen3.5-4B to 1.23 GB, 2.3 bits per weight. The file solves 330 of 540 exact-answer math problems. Prism ML's Bonsai 2 Ternary 4B solves 328 at 1.20 GB, and the original solves 359. Its KL from the original on held-out text is 0.45 nats, against 0.59 for Bonsai.
+## 当前进度
 
-The recipe is post-training quantization with trellis codes, calibrated on the model's own worked math solutions with digit tokens weighted 10×, and with bits allocated per row by Fisher information. 4,000 steps of distillation follow, in which every layer is re-quantized once from the original weights. The page has the findings, the full recipe and its cost, about $34 of GPU time.
+2026-11-12：9B 已生成校准解答并完成 Fisher 分配，正在逐层量化；3.8-27B 已下载并准备环境，排在9B之后。尚无 W-ModelForge 完整模型的压缩大小、质量保留率或总体加速结论。显存使用随阶段变化，当前采样不能代表整个任务峰值。
 
-The recipe's code is here, and the next section runs it.
+当前配方只做文本 PTQ，不含蒸馏。产物为原方案自定义 packed 格式，不是 GGUF 或标准 Transformers 权重；图像/视频能力、编码和工具调用尚未评估。上游的4B成绩只在方法文档中作为来源背景保留，不能当作 W-ModelForge 的结果。
 
-## Run the compiler on SmolLM2-360M in three commands
+## 来源
 
-Install the dependencies and download the model and WikiText-2. The code reads SmolLM2-360M's config when it starts, so do this first.
-
-```sh
-pip install -r requirements.txt
-python -c "from huggingface_hub import snapshot_download as d; d('HuggingFaceTB/SmolLM2-360M')"
-python -c "from datasets import load_dataset as l; l('Salesforce/wikitext', 'wikitext-2-raw-v1')"
-```
-
-**Measure.** This compresses one piece at a time, leaves the rest exact, and records the KL to the original model. The full set for this model, 2,312 measurements, took about 50 minutes on an L40S.
-
-```sh
-python compiler.py measure --model HuggingFaceTB/SmolLM2-360M --part linear --layers 0-3 --out results/batch/my_measurements.json
-```
-
-**Allocate.** This picks one code per piece, with the least summed KL inside the budget. It needs no GPU. This command uses the SmolLM2-360M measurements in this repository, with a budget of 3.044 bits per weight.
-
-```sh
-python compiler.py allocate --sens 'results/batch/ccSens*.json' --target disk --items linear --bits 3.044 --out results/compiler/plans/my_plan.json
-```
-
-The plan it writes has the same widths as `results/compiler/plans/sm_lin_3044.json`.
-
-**Build and score.** This quantizes the model to the plan, one matrix at a time. It then reports perplexity and KL to the original on WikiText-2 test.
-
-```sh
-python quantize.py --program plan --model HuggingFaceTB/SmolLM2-360M --plan results/compiler/plans/my_plan.json --out results/my_run.json
-```
-
-Our run of that plan is in `results/batch/cc_sm_lin_3044.json`. It reached perplexity 16.64 and KL 0.0926, against an original perplexity of 15.31. Add `--layers 1 --calib 8 --eval 2` for a quick check that everything works.
-
-## Run the LookAtMyQuant 2 recipe on Qwen3.5-4B
-
-Each step is a named job; `python run_batch.py --list` prints its command. The jobs need Qwen3.5-4B in `models/Qwen3.5-4B` on the volume and the text mix (`modal run --detach modal_fetch.py --text`). Every file they make goes to `lm2/` on the volume.
-
-```sh
-modal run --detach modal_app.py --jobs lm2Text
-modal run --detach modal_app.py --jobs lm2Calibration,lm2Solutions
-modal run --detach modal_app.py --jobs lm2RowImportance
-modal run --detach modal_app.py --jobs lm2Build
-modal run --detach modal_app.py --jobs lm2Finetune
-modal run --detach modal_app.py --jobs lm2Math,lm2Math216,lm2TextKL
-```
-
-| Job | Script | What it does | Our run |
-|---|---|---|---|
-| `lm2Text` | `other_text.py` | The original answers science, code, instruction and tool prompts, and MATH and GSM8K training problems. This also downloads MATH | |
-| `lm2Calibration` | `math_calibration.py` | The calibration set: the original's greedy solutions to 384 MATH training problems, in 2,048-token windows | 15 minutes, H100 |
-| `lm2Solutions` | `checked_solutions.py` | The math text the fine-tuning distils on: solutions to MATH problems and to `math_bench.py` problems from another seed, with wrong calculations corrected and only right answers kept | 33 minutes, H100 |
-| `lm2RowImportance` | `row_importance.py` | Each output row's Fisher information at digit-predicting positions | 1 minute, H100 |
-| `lm2Build` | `quantize.py` | Post-training quantization: trellis codes along rows, digit tokens weighted 10× in the Hessians, QEP at α = 0.5, bits per row from the row plan, e-means codebooks | 37 minutes, H100 |
-| `lm2Finetune` | `finetune.py` | 4,000 steps of distillation on latent weights pulled toward their codes, with every layer re-quantized once from the original weights | 2.7 hours, B200 |
-| `lm2Math`, `lm2Math216` | `math_eval.py` | The 540-problem benchmark and a second set of 216, for the original, Bonsai, the build and the fine-tuned build | 20 minutes a model, H100 |
-| `lm2TextKL` | `text_kl.py` | KL from the original on WikiText-2 and on the text mix's 13 sources | 1 minute a model, H100 |
-
-`lm2BuildSmoke`, `lm2FinetuneSmoke` and `lm2MathSmoke` run the same code on two layers, 60 steps and 36 problems, in a few minutes each.
-
-**The row plan.** `lm2Build` reads `results/compiler/rows/q35_rowplan_1p2GB.json`, which gives 1 to 4 bits to each of 1,520 row groups. `row_allocation.py` made it. Its `build-control` command builds and packs a control with a fixed split of rows, `prepare-rows` allocates rows inside the control's packed bytes with `rowgroup_alloc.py`, and `build-rows` builds under the plan and checks the packed size against it.
-
-**The codebooks.** The four e-means codebooks the build decodes with are in `cache/codes/`. `--trellis-fit lloyd` gives the earlier ones, and a plan made before the change keeps them unless the flag says otherwise.
-
-**Where these jobs differ from our run.** Our GSM8K solutions were written earlier, with thinking always off. Our text KL on 13 sources used 52 windows picked from the text mix by a separate tool; `--sources mix` takes the mix's own evaluation windows, on which our file scores 0.44 where the page reports 0.45.
-
-## Large models run on Modal, one GPU per job
-
-`run_batch.py` names every job, and `modal_app.py` runs them. `modal_fetch.py` downloads models and the text mix used for calibration and evaluation.
-
-```sh
-modal run modal_app.py::setup
-modal run --detach modal_fetch.py --text
-modal run --detach modal_fetch.py --models google/gemma-4-E2B-it
-modal run --detach modal_app.py --jobs ccMG4E2Noise,ccMG4E2Spot,ccMG4E2EmbKv
-```
-
-The runs behind the site used these machines, each with 8 CPU cores:
-
-| Model | GPU | Time |
-|---|---|---|
-| SmolLM2-360M | L40S | About 50 minutes to measure, in 9 parallel jobs |
-| Gemma 4 E2B, measuring | H100 | 7–26 minutes per job, in 4 jobs |
-| Gemma 4 E2B, building a plan | H100 | 28–58 minutes per plan |
-
-`gguf_compiler.py` makes plans out of llama.cpp's own tensor types, so the result runs in llama.cpp as it is. `public_eval.py` scores public quantizations the same way as our plans. Both run inside the image in `modal_gguf.py`, which builds llama.cpp with CUDA.
-
-## The Apple Silicon runtime reads Lloyd–Max and trellis plans
-
-`quantize.py --export <folder>` writes a plan in the format `runtime_mlx/` reads. A plan with trellis codes also needs `--trellis-rows 16,8`, which runs each trellis path along a row of its matrix, so that decoding an entry reads only that row. The runtime needs `mlx` and `mlx_lm`, which are not in `requirements.txt`.
-
-On Gemma 4 E2B at 2.5 GB, the trellis plan has 26% lower KL than the Lloyd–Max plan and decodes about 22% slower. `runtime_mlx/test_trellis_gen.py` and `runtime_mlx/test_trellis.py` check the trellis kernels against the matrices the quantizer built.
-
-```sh
-python runtime_mlx/bench.py lamq path/to/export
-```
-
-## Where everything is
-
-| Path | What it holds |
-|---|---|
-| `compiler.py` | Measure and allocate |
-| `compiler_arch.py` | How the compiler finds a model's layers, tables and stages, and the text mix |
-| `quantize.py` | Builds a program or a plan, then scores it |
-| `row_importance.py`, `rowgroup_alloc.py`, `row_allocation.py`, `compiler_artifact.py` | Bits per row: each row's importance, the allocation, the builds it compares, and the packed format that prices them |
-| `math_calibration.py`, `checked_solutions.py`, `other_text.py`, `calc_check.py`, `token_kinds.py` | The text the recipe calibrates and fine-tunes on, the checker for stated calculations, and the kind of token each position predicts |
-| `finetune.py`, `finetune_lib.py`, `fast_delta.py` | Fine-tuning that ends on the codes, and a faster linear-attention rule for Qwen3.5 |
-| `math_bench.py`, `math_eval.py`, `text_kl.py` | The exact-answer math benchmark, its runner for the Qwen3.5 family and Bonsai, and KL from the original on text |
-| `gguf_compiler.py`, `public_eval.py`, `eval_tasks.py` | The llama.cpp route, public quantizations and task benchmarks |
-| `lamq_export.py`, `runtime_mlx/` | The export format and the Apple Silicon runtime |
-| `opgraph/` | The grammar: a model as a tensor network, and the rewrites and codes that act on it |
-| `run_completeness.py`, `make_report.py` | The check that nine published methods are reproduced exactly |
-| `analyze_compiler.py` | The tables of plan results |
-| `run_batch.py`, `modal_app.py`, `modal_gguf.py`, `modal_fetch.py` | Named jobs and the Modal runners |
-| `results/compiler/plans/`, `results/compiler/rows/` | Every plan, and the row plan for Qwen3.5-4B at 1.2 GB |
-| `results/protocols/` | The second math set of 216 problems, and the hashes of every question kept out of training text |
-| `cache/codes/` | The e-means trellis codebooks at 1 to 4 bits |
-| `results/batch/`, `results/gguf/` | The measurements and plan runs behind the site |
-| `results/COMPILER.md`, `results/COMPLETENESS.md` | Write-ups of the compiler on SmolLM2-360M and Qwen3.5-4B, and of the reproduction check |
-| `site/` | The website. Run `python3 -m http.server 8000` inside it, then visit http://localhost:8000 |
-| `site2/` | The LookAtMyQuant 2 page. It runs the same way |
-| `tests/` | Tests of the grammar and the codes |
-
-## The tests need SmolLM2-360M and WikiText-2
-
-Each test file runs on its own from the repository root, and all six finish in under a minute.
-
-```sh
-python tests/test_frame.py
-python tests/test_grammar.py
-python tests/test_codes.py
-python tests/test_elements.py
-python tests/test_nested.py
-python tests/test_rowgroup_alloc.py
-```
-
-`runtime_mlx/test_core.py` checks the runtime against the quantizer's math. Run `python runtime_mlx/make_ref.py` first, which writes 1.6 GB of reference files.
-
-## What this repository leaves out
-
-- **Model weights.** Everything downloads from Hugging Face. The Qwen3.5-4B jobs expect that model in `models/Qwen3.5-4B` on the volume.
-- **Benchmark copies.** `eval_tasks.py` downloads its benchmarks. On an offline machine it reads exported copies from `data/bench/`, which are not here. The Modal images run offline, so cache the benchmarks on the volume first.
-- **The script that assembled `site/data.json`.** It was a set of one-off steps. The source numbers are all in `results/`.
-- **LookAtMyQuant 2's weights and result files.** The 1.2 GB file is not published, and neither are the per-problem results behind `site2/data.json` or the script that writes the page's numbers from them.
+这个仓库保留了 LookAtMyQuant 的 Git 提交历史和 GitHub fork 关系，以便追溯首个方法的来源；**W-ModelForge 的项目范围包括后续其他量化与加速方案**。LookAtMyQuant 编译器、原始配方、缓存码本和历史实验归原作者 Shin Megami Boson。我们的修改另列于 [UPSTREAM.md](UPSTREAM.md)，不表示上游作者或 Qwen 的背书。

@@ -28,6 +28,8 @@ Words
                              step multiplier of each matrix set so its entropy hits a target rate
 """
 
+# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
+
 from __future__ import annotations
 
 import math
@@ -233,11 +235,19 @@ def restrict_trellis(net: Net, core: str, label: str, domain: Domain, given: tor
         Q = v[viterbi(X, v, domain.state_bits, int(domain.bits))]
     else:
         Q = given.to(X.dtype).reshape(X.shape)
+        # Keep CPU sorting (including duplicate-level order), but move the independent
+        # lookups and exact path checks with the sweep. Whole rows retain every transition.
         order = torch.argsort(v)
-        pos = torch.searchsorted(v[order], Q.contiguous()).clamp(max=len(v) - 1)
-        states = order[pos]
-        if not (torch.equal(v[states], Q) and is_trellis_path(states, domain.state_bits, int(domain.bits))):
-            raise ValueError("the given projection is not a path through this trellis")
+        dev = DEVICE if GPU_SWEEP and DEVICE == "cuda" else "cpu"
+        levels, sorted_levels, indices = v.to(dev), v[order].to(dev), order.to(dev)
+        rows = max(1, (1 << 22) // max(1, Q.shape[1]))
+        for start in range(0, len(Q), rows):
+            values = Q[start:start + rows].to(dev).contiguous()
+            pos = torch.searchsorted(sorted_levels, values).clamp(max=len(v) - 1)
+            states = indices[pos]
+            if not (torch.equal(levels[states], values)
+                    and is_trellis_path(states, domain.state_bits, int(domain.bits))):
+                raise ValueError("the given projection is not a path through this trellis")
     c.data = torch.movedim(Q.reshape(shape), -1, ax)
     c.domain = Domain(domain.kind, domain.bits, levels=domain.levels, axis=label, state_bits=domain.state_bits, fixed_start=domain.fixed_start)
     return n
@@ -411,7 +421,7 @@ class RowTrellisCode:
 
 
 def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list[int], incoherent: bool = True,
-               in_seed: int | None = None, out_rot: bool = True) -> list[Net]:
+               in_seed: int | None = None, out_rot: bool = True, input_cache: dict | None = None) -> list[Net]:
     """(Gauge: incoherence →) Split(scale, per row, by RMS) → (block LDLQ sweep →) the code's Restrict and Split, for
     matrices that read the same input. They share one input transform (computed once at runtime), keep their own output
     transforms, and are swept together as one taller matrix: rows do not interact under Refit, so this is the same as
@@ -422,7 +432,16 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
     Ws = [W.to(dev).double() for W in Ws]
     n = Ws[0].shape[1]
     rows, cols = ("u" if out_rot else "o", "v") if incoherent else ("o", "i")
-    R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
+    cache_key = cached = None
+    if input_cache is not None:
+        if H is None or in_seed is None or not incoherent or out_rot:
+            raise ValueError("input cache requires an explicit input-only rotation and an unchanged H")
+        cache_key = (id(H), H._version, n, int(in_seed), str(dev))
+        cached = input_cache.get(cache_key)
+    if cached is not None:
+        R_in = cached[0]
+    else:
+        R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
     nets = []
     for W, s in zip(Ws, seeds):
         net = matrix_net(W)
@@ -436,7 +455,13 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
     S = X.pow(2).mean(1).sqrt().clamp(min=1e-12)
     settled = None
     if H is not None:
-        H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
+        if cached is None:
+            H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
+            env = Environment(H)
+            if input_cache is not None:
+                input_cache[cache_key] = (R_in, env)
+        else:
+            env = cached[1]  # sweep reads dead/U and only mutates its own T; H/U stay unchanged.
         settled = torch.empty_like(X)  # the sweep's projection, in units of the row scale
 
         def project(j, x, T):
@@ -449,7 +474,7 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
             q = q * S[:, None]
             return q[:, 0] if code.width == 1 else q
 
-        X = sweep(X, Environment(H), project, width=code.width)
+        X = sweep(X, env, project, width=code.width)
         settled = settled.cpu()
     X, S = X.cpu(), S.cpu()
     out, r0 = [], 0
