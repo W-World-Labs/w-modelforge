@@ -27,12 +27,12 @@ The inherited source has moved to `methods/lookatmyquant/`. Source filenames bel
 | `colab/` | Official hosted Colab MCP client and a parameterized 9B/27B PTQ/rclone workflow; no credentials, model weights, or private run logs are committed. |
 | `README.md`, `NOTICE.md`, `LICENSE`, `UPSTREAM.md` | Fork identity, upstream credit, license separation and experiment limits. |
 
-The algorithm remains the upstream trellis/LDLQ/Hadamard recipe with its cached EMA codebooks. Precision of the FP64 quantization algebra, CPU table ordering, nearest-level tie rules and path checks is retained. The current experiments do not include the upstream 4,000-step distillation.
+The trellis path retains the upstream trellis/LDLQ/Hadamard recipe with its cached EMA codebooks. Precision of the FP64 quantization algebra, CPU table ordering, nearest-level tie rules and path checks is retained. The current experiments do not include the upstream 4,000-step distillation.
 
 ## Maintenance
 
 Use `upstream` for the original repository and `origin` for this fork. Keep downstream commits separate from the baseline; inspect future upstream changes before merging. Record the source commit, model revision, dtype, recipe, environment and output hashes for each run. Never substitute an unrecorded branch head into an existing run.
 
-The active 9B process uses its previously deployed memory patch; later source optimizations first apply to the queued 27B process. A running process is not automatically updated by a Git push. Completed-layer counts and GPU readings are progress observations, not reproducibility or quality claims.
+The initial trellis builds used the previously deployed9B memory patch, with later source optimizations applied to the queued27B process; those builds are complete. A running process is not automatically updated by a Git push. Completed-layer counts and GPU readings are progress observations, not reproducibility or quality claims.
 
-The separate 9B adaptive standard-GGUF run completed its native release review: original BF16 183/216 versus adaptive 184/216 at cap4096, with 29/24 cap hits; short WikiText PPL 8.915811/9.263493 and KL 0.038616. These results use frozen measurement/build/math revisions recorded with the artifact, rather than replacing legacy LAMQ scores. The original-BF16 27B GGUF run remains in progress.
+The separate 9B adaptive standard-GGUF run completed its native release review: original BF16 183/216 versus adaptive 184/216 at cap4096, with 29/24 cap hits; short WikiText PPL 8.915811/9.263493 and KL 0.038616. These results use frozen measurement/build/math revisions recorded with the artifact, rather than replacing legacy LAMQ scores. The original-BF16 27B GGUF run also passed review:193→191/216,20→19 cap hits,98.9637% relative count, with unchanged cross-runtime original report and matching full native/engine/CUDA fingerprints. Its mixed PPL is slightly above stock and is disclosed.

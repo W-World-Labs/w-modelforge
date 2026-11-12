@@ -32,3 +32,5 @@ Model licenses are separate from this repository's MIT code license. Quantized a
 ## Calibration and evaluation data
 
 Sources are downloaded separately: [EleutherAI/hendrycks_math](https://huggingface.co/datasets/EleutherAI/hendrycks_math), [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu), [FineWeb-2](https://huggingface.co/datasets/HuggingFaceFW/fineweb-2), [CodeParrot-clean](https://huggingface.co/datasets/codeparrot/codeparrot-clean), and [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext). Their dataset cards and underlying source terms remain applicable. This fork grants no new rights to the underlying text, model-generated calibration solutions or externally downloaded datasets. Private run caches and raw data are excluded from new commits.
+
+Redistributed download/launch helper copies carry the full project MIT copyright/permission text separately from the source model Apache-2.0 LICENSE. Public GGUF model packages contain no external engine binaries; they link the pinned llama.cpp source/license and record the actual engine/library fingerprints.

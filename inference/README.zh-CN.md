@@ -12,7 +12,7 @@
 | `export_hf.py` → `serve_vllm.sh` | 展开后的标准 HF safetensors | 可选转换/启动入口；不代表已完成 vLLM 质量或速度评测 |
 | `export_hf.py` → `convert_llamacpp.sh` → `serve_llamacpp.sh` | 标准 HF → language GGUF + mmproj GGUF | 9B实际转换/CUDA启动及red、blue、156请求通过；无该引擎质量/速度基准 |
 
-2026-11-12 UTC：9B公开下载/参考启动、CPU标准HF导出（333个原始BF16视觉哈希一致）、F32 GGUF与BF16/F32 mmproj转换及llama.cpp CUDA启动均已实际核验，三请求回答red、blue、156后停止临时服务。回执见[9B模型卡](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2)。这只核验格式与启动，llama.cpp未测数学216、PPL或速度；vLLM及27B外部引擎仍未实际执行。
+2026-11-12 UTC：9B公开下载/参考启动、CPU标准HF导出（333个原始BF16视觉哈希一致）、F32 GGUF与BF16/F32 mmproj转换及llama.cpp CUDA启动均已实际核验，三请求回答red、blue、156后停止临时服务。回执见[9B模型卡](https://huggingface.co/W-World-Labs/Qwen3.5-9B-LAMQ2)。这只核验LAMQ展开导出的格式与启动，该导出尚未测原生数学216、PPL或速度；vLLM及27B的LAMQ展开导出仍未实际执行。原BF16重新量化的标准GGUF有独立原生评测，见上方流程。
 
 **vLLM 和 llama.cpp 不能直接读取本项目的 `opgraph-packed-1`。** 后两条路径会展开权重，失去当前 packed 文件的低比特存储体积；脚本没有实现 trellis 原生推理内核。再次用 GGUF Q4/IQ 等量化属于新的有损转换，需要重新评估，不能沿用当前模型卡分数。
 
