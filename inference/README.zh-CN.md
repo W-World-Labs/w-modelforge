@@ -92,6 +92,19 @@ LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
 
 运行参数可通过 `LLAMA_SERVER`、`N_GPU_LAYERS`、`HOST`、`PORT`、`MAX_MODEL_LEN`、`SERVED_MODEL_NAME` 调整，额外 llama-server 参数直接追加。多模态必须同时传语言 GGUF 和 mmproj；官方接口见 [llama.cpp 多模态说明](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/docs/multimodal.md)。
 
+## 更长输出的 math216 对照
+
+`compare_math_caps.py` 继续使用相同216道冻结合成算术题：27B保持BF16/batch8，2048和4096分别独立生成；9B保持FP32/batch4，测试4096。每进程仅一份GPU模型，原始与packed分开执行，不重复与生成上限无关的PPL、重建与视觉评估。既有1024报告不覆盖。
+
+```bash
+python methods/lookatmyquant/compare_math_caps.py --kind original --model-id Qwen/Qwen3.8-27B --model-path /path/to/original27-snapshot --dtype bfloat16 --batch 8 --max-new 2048 4096 --output ./runs/math-caps27
+python methods/lookatmyquant/compare_math_caps.py --kind packed --model-id Qwen/Qwen3.8-27B --packed ./models/qwen38-27b/packed --dtype bfloat16 --batch 8 --max-new 2048 4096 --output ./runs/math-caps27
+# 9B使用对应原始/packed路径、Qwen/Qwen3.5-9B、
+# --dtype float32 --batch 4 --max-new 4096，以及独立输出目录。
+```
+
+每批原子保存生成全文、分数和截断信息；同参数重启时，仅在协议、模型、源码、文本资产和运行环境指纹全部一致时续跑。可选加 `--rclone-remote mydrive:project/math-caps27`，每批只复制并校验original.json、packed.json、comparison.json三个小文件；目标子目录应专用，日志/锁留在输出目录之外。本流程评估质量，不是独占资源的吞吐基准。
+
 ## 来源与许可
 
 脚本和 `export_hf.py` 为 W-World-Labs 的 MIT 代码，复用 Shin Megami Boson / LookAtMyQuant 的 MIT packed 解码，详见仓库 [NOTICE](https://github.com/W-World-Labs/w-modelforge/blob/main/NOTICE.md)。模型沿用 Qwen 权重的 Apache-2.0 许可。vLLM（Apache-2.0）和 llama.cpp（MIT）是外部依赖，没有将其源码并入本项目。

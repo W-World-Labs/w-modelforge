@@ -92,6 +92,19 @@ Language conversion uses `--no-mtp`; the vision converter excludes MTP itself an
 
 Environment overrides: `LLAMA_SERVER`, `N_GPU_LAYERS`, `HOST`, `PORT`, `MAX_MODEL_LEN`, `SERVED_MODEL_NAME`; append extra llama-server flags. Multimodal serving requires both language GGUF and mmproj. See the [official multimodal guide](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/docs/multimodal.md).
 
+## Longer math216 comparisons
+
+`compare_math_caps.py` repeats the same frozen synthetic-arithmetic protocol. Current profiles are 27B BF16/batch8 at independently generated 2048 and 4096 caps, and 9B FP32/batch4 at 4096. Original and packed models run separately, one GPU model per process; PPL/parity/vision are not rerun. Existing 1024 reports remain unchanged.
+
+```bash
+python methods/lookatmyquant/compare_math_caps.py --kind original --model-id Qwen/Qwen3.8-27B --model-path /path/to/original27-snapshot --dtype bfloat16 --batch 8 --max-new 2048 4096 --output ./runs/math-caps27
+python methods/lookatmyquant/compare_math_caps.py --kind packed --model-id Qwen/Qwen3.8-27B --packed ./models/qwen38-27b/packed --dtype bfloat16 --batch 8 --max-new 2048 4096 --output ./runs/math-caps27
+# For 9B, use its original snapshot/packed path, --model-id Qwen/Qwen3.5-9B,
+# --dtype float32 --batch 4 --max-new 4096 and a separate output directory.
+```
+
+Reports contain full generated text, scores and truncations. They are atomically saved after each complete batch; rerunning identical arguments resumes only when protocol, model, source, assets and runtime fingerprints match. Optional `--rclone-remote mydrive:project/math-caps27` copies/checks only original.json, packed.json and comparison.json after each batch. Use a dedicated remote subdirectory; logs/locks stay outside the output directory. These are quality comparisons, not isolated throughput benchmarks.
+
 ## Sources and licenses
 
 Scripts and `export_hf.py`: W-World-Labs, MIT; packed decoding: Shin Megami Boson's LookAtMyQuant, MIT. See [NOTICE](https://github.com/W-World-Labs/w-modelforge/blob/main/NOTICE.md). Qwen weights retain Apache-2.0. vLLM (Apache-2.0) and llama.cpp (MIT) are external dependencies, not vendored source.
