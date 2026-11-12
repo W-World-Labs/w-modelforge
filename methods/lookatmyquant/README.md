@@ -30,7 +30,7 @@ python release_validation.py --phase reference --model-path /path/to/original --
 python release_validation.py --phase packed --packed /path/to/packed --work-dir /path/to/work --out /path/to/release-validation.json --dtype float32 --cache-tag qwen3.5-9b --batch 4 --max-new 1024 --baseline-math /path/to/math216.json
 ```
 
-`reference` 依次捕获原始模型与原位加载 dense 后的同一组固定 WikiText 留出窗口，缓存 logprobs、PPL、四条公开英/中/代码/数学提示的32-token贪心结果及哈希；`packed` 不读取原始权重，独立加载打包权重，比较数值和生成结果，并直接运行同一216题数学评估。4×128 的额外窗口只用于一致性与小样本检查，不替代主流程的8/16×512评估。`--baseline-math` 必须是相同 dtype、题目与贪心/no-thinking/1024-token配方的原始模型结果；报告计算90%数学保留门槛，PPL/KL及最终发布仍需人工审阅。此命令不会上传 HF，也不会写发布完成标记。
+`reference` 依次捕获原始模型与原位加载 dense 后的同一组固定 WikiText 留出窗口，缓存 logprobs、PPL、四条公开英/中/代码/数学提示的32-token贪心结果及哈希；`packed` 不读取原始权重，独立加载打包权重，比较数值和生成结果，并直接运行同一216题数学评估。4×128 的额外窗口只用于一致性与小样本检查，不替代主流程的8/16×512评估。`--max-new` 可选1024或2048；`--baseline-math` 必须是相同 dtype、题目、生成上限与贪心/no-thinking配方的原始模型结果；报告计算90%数学保留门槛，PPL/KL及最终发布仍需人工审阅。此命令不会上传 HF，也不会写发布完成标记。
 
 ---
 

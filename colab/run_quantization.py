@@ -177,6 +177,7 @@ def main():
     parser.add_argument("--drive-directory", default="model-quantization")
     parser.add_argument("--run-id", default=time.strftime("%Y%m%d"))
     parser.add_argument("--calibration-batch", type=int, default=None)
+    parser.add_argument("--eval-max-new", type=int, choices=[1024, 2048], default=1024)
     parser.add_argument("--stage", choices=["setup", "calibrate", "allocate", "build", "pack", "evaluate", "sync", "all"], default="all")
     args = parser.parse_args()
     if not args.drive_remote or ":" in args.drive_remote:
@@ -208,9 +209,11 @@ def main():
     for stage in stages:
         marker = OUTPUT / f"{stage}.done.json"
         if marker.exists():
-            print("Already completed:", stage, flush=True)
-            sync()  # Retry backup even when this stage's computation already finished.
-            continue
+            if stage != "evaluate" or json.loads(marker.read_text()).get("max_new_tokens") == args.eval_max_new:
+                print("Already completed:", stage, flush=True)
+                sync()  # Retry backup even when this stage's computation already finished.
+                continue
+            marker.unlink()  # A changed cap invalidates completion before any reports are replaced.
         started = time.time()
         save("status.json", {"stage": stage, "state": "running", "started_utc": started})
         try:
@@ -256,7 +259,7 @@ def main():
                 elif stage == "evaluate":
                     evaluation_args = ("--dtype", DTYPE,
                                        "--cache-tag", MODEL.split("/")[-1].lower() if CPU_OFFLOAD else "qwen35",
-                                       "--batch", 8 if is_27b else 4, "--max-new", "1024")
+                                       "--batch", 8 if is_27b else 4, "--max-new", args.eval_max_new)
                     python("release_validation.py", "--phase", "reference", "--model-path", model_dir,
                            "--dense", WORK / "dense.pt", "--work-dir", WORK / "release",
                            "--out", OUTPUT / "release-reference.json", *evaluation_args)
@@ -266,7 +269,8 @@ def main():
                     python("release_validation.py", "--phase", "packed", "--packed", OUTPUT / "packed",
                            "--work-dir", WORK / "release", "--baseline-math", OUTPUT / "math216.json",
                            "--out", OUTPUT / "release-validation.json", *evaluation_args)
-            save(marker.name, {"seconds": round(time.time() - started)})
+            save(marker.name, {"seconds": round(time.time() - started),
+                               **({"max_new_tokens": args.eval_max_new} if stage == "evaluate" else {})})
             save("status.json", {"stage": stage, "state": "completed", "seconds": round(time.time() - started)})
             sync()
         except Exception as error:

@@ -209,14 +209,14 @@ def main():
     parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
     parser.add_argument("--cache-tag", default="qwen35")
     parser.add_argument("--batch", type=int, default=4)
-    parser.add_argument("--max-new", type=int, default=1024)
+    parser.add_argument("--max-new", type=int, choices=[1024, 2048], default=1024)
     parser.add_argument("--baseline-math", type=Path)
     args = parser.parse_args()
     if ((args.phase == "reference" and (args.model_path is None or args.dense is None))
             or (args.phase == "packed" and args.packed is None)):
         parser.error("reference needs --model-path/--dense; packed needs --packed")
-    if args.batch < 1 or args.max_new != 1024:
-        parser.error("use positive --batch and the main protocol's --max-new 1024")
+    if args.batch < 1:
+        parser.error("--batch must be positive")
     if not torch.cuda.is_available():
         parser.error("this release evaluation uses CUDA, like the main Colab math evaluation")
     torch.backends.cuda.matmul.allow_tf32 = False
