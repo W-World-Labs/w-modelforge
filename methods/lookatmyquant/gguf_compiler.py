@@ -112,8 +112,9 @@ def prepare(args):
         if not f.exists():
             sh([BIN / "llama-quantize", "--imatrix", imat, base, f, t])
         (w / f"stock_{t}.json").write_text(json.dumps(gguf_tensors(f)))  # each tensor's bytes, for the budgets
-    from datasets import load_dataset
-    (w / "wikitext_test.txt").write_text("\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"]))
+    if not (w / "wikitext_test.txt").exists():
+        from datasets import load_dataset
+        (w / "wikitext_test.txt").write_text("\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"]))
     ev = mix.windows("eval", args.eval_chunks, args.context, seed=2)
     (w / "mix_eval.txt").write_text("\n\n".join(tok.decode(ev[s][k]) for k in range(args.eval_chunks) for s in mix.sources))
     from row_allocation import file_sha256
