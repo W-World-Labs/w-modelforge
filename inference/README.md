@@ -74,16 +74,20 @@ Image requests use OpenAI-compatible `messages[].content` with `text` and `image
 
 The statically reviewed commit is [`93cf736a8d1d46aa922e27eb64aa712bcd5ebc30`](https://github.com/ggml-org/llama.cpp/tree/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30). Review later upstream changes and follow the [official build guide](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/docs/build.md).
 
+The converter has its own environment: the pinned upstream requirements request Torch 2.11 and Transformers 4.57.6. Keep the reference export environment above for `export_hf.py`, then use the converter environment only for GGUF conversion. Colab images without ensurepip can replace the environment-creation line with `uv venv --seed --python python .venv-gguf`.
+
 ```bash
 git clone https://github.com/ggml-org/llama.cpp.git
 git -C llama.cpp checkout 93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
-python -m pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+python -m venv .venv-gguf
+.venv-gguf/bin/python -m pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
 # NVIDIA CUDA:
 cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
 # Apple Metal: omit -DGGML_CUDA=ON above; Metal is enabled by default.
 cmake --build llama.cpp/build --config Release -j 8
 
-bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
+PATH="$PWD/.venv-gguf/bin:$PATH" \
+  bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
 LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
   bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf
 ```

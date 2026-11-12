@@ -74,16 +74,20 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 静态核对的 llama.cpp 版本为 [`93cf736a8d1d46aa922e27eb64aa712bcd5ebc30`](https://github.com/ggml-org/llama.cpp/tree/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30)，后续版本需按其上游变更检查。先按 [官方构建说明](https://github.com/ggml-org/llama.cpp/blob/93cf736a8d1d46aa922e27eb64aa712bcd5ebc30/docs/build.md) 编译。
 
+转换器使用独立环境：所固定的上游依赖指定Torch 2.11和Transformers 4.57.6。`export_hf.py`继续在上面的参考模型环境运行，GGUF转换单独使用下方环境。Colab镜像缺少ensurepip时，可将创建环境那行替换为`uv venv --seed --python python .venv-gguf`。
+
 ```bash
 git clone https://github.com/ggml-org/llama.cpp.git
 git -C llama.cpp checkout 93cf736a8d1d46aa922e27eb64aa712bcd5ebc30
-python -m pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+python -m venv .venv-gguf
+.venv-gguf/bin/python -m pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
 # NVIDIA CUDA：
 cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
 # Apple Metal：上面一行省略 -DGGML_CUDA=ON，Metal 默认启用。
 cmake --build llama.cpp/build --config Release -j 8
 
-bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
+PATH="$PWD/.venv-gguf/bin:$PATH" \
+  bash inference/convert_llamacpp.sh ./expanded/qwen35-9b ./llama.cpp ./gguf/qwen35-9b
 LLAMA_SERVER=./llama.cpp/build/bin/llama-server \
   bash inference/serve_llamacpp.sh ./gguf/qwen35-9b/language.gguf ./gguf/qwen35-9b/mmproj.gguf
 ```
