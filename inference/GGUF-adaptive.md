@@ -48,6 +48,21 @@ python "$METHOD/gguf_compiler.py" evaluate "${GGUF_ARGS[@]}" \
 
 For 27B use its exact original snapshot, `Qwen/Qwen3.8-27B`, and a separate work directory. Temporary BF16/candidate files and native KL base logits require substantial additional disk; allocate space before starting. Keep active source revisions fixed and do not deploy changes into running evaluations.
 
-Native perplexity/KL, independent original/adaptive math216 at the selected generation cap, full-file checksums and basic image inference must accompany publication. Provide the matching BF16/F32 mmproj and state any converter-required F32 visual tensors. Standard llama.cpp compatibility does not establish compatibility with every version of a downstream application or prove a throughput improvement.
+Run native math separately for the original BF16 GGUF and the adaptive GGUF. `math_gguf.py` renders prompts with the original tokenizer, checks all 216 native tokenizations, then submits the same token IDs with greedy decoding, four slots, 8192 context per slot, a 4096 generation cap, F16 KV and prompt caching disabled. It saves raw generated token IDs and complete text after each cohort. Both models receive the same two basic image prompts. This is an independent native-engine protocol, rather than an assignment of Torch scores to GGUF.
+
+```bash
+python "$METHOD/math_gguf.py" --kind original --model-id Qwen/Qwen3.5-9B \
+  --snapshot /absolute/path/to/pinned-original-snapshot --gguf "$GGUF_WORK/bf16.gguf" \
+  --mmproj /absolute/path/mmproj.gguf --llama-dir /absolute/path/llama.cpp \
+  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-original.json"
+python "$METHOD/math_gguf.py" --kind adaptive --model-id Qwen/Qwen3.5-9B \
+  --snapshot /absolute/path/to/pinned-original-snapshot --gguf "$GGUF_WORK/plan_adaptive.gguf" \
+  --mmproj /absolute/path/mmproj.gguf --llama-dir /absolute/path/llama.cpp \
+  --images /absolute/path/to/published/examples --out "$GGUF_WORK/math-adaptive.json"
+```
+
+After a model's GGUF package is published under `gguf-adaptive/`, `MODEL_FORMAT=gguf bash inference/download.sh REPOSITORY ./models/native` downloads only that package and verifies its checksums. The default packed download excludes the optional GGUF files. Use `serve_llamacpp.sh` with the downloaded language GGUF and matching mmproj.
+
+Native perplexity/KL, independent math216, full-file checksums and basic image inference must accompany publication. Provide the matching BF16/F32 mmproj and state any converter-required F32 visual tensors. Standard llama.cpp compatibility does not establish compatibility with every version of a downstream application or prove a throughput improvement.
 
 Source/compiler code: Shin Megami Boson and W-World-Labs, MIT; external llama.cpp, MIT; Qwen weights, Apache-2.0. See [NOTICE](../NOTICE.md) and [UPSTREAM](../UPSTREAM.md).

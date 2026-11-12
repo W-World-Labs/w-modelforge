@@ -2,11 +2,16 @@
 # Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
 set -euo pipefail
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 HF_REPOSITORY OUTPUT_DIRECTORY [REVISION]" >&2
+  echo "Usage: MODEL_FORMAT=packed|gguf $0 HF_REPOSITORY OUTPUT_DIRECTORY [REVISION]" >&2
   exit 2
 fi
-hf download "$1" --local-dir "$2" --revision "${3:-main}"
-python - "$2" <<'PY'
+format="${MODEL_FORMAT:-packed}"
+case "$format" in
+  packed) hf download "$1" --local-dir "$2" --revision "${3:-main}" --exclude 'gguf-adaptive/*' ;;
+  gguf) hf download "$1" --local-dir "$2" --revision "${3:-main}" --include 'gguf-adaptive/*' ;;
+  *) echo "MODEL_FORMAT must be packed or gguf" >&2; exit 2 ;;
+esac
+python - "$2" "$format" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +27,18 @@ def verify(path, expected_size, expected_hash):
             digest.update(block)
     if digest.hexdigest() != expected_hash:
         raise SystemExit(f"SHA256 mismatch: {path}")
+
+if sys.argv[2] == "gguf":
+    root = root / "gguf-adaptive"
+    checks = json.loads((root / "checksums.json").read_text())
+    if not checks["files"]:
+        raise SystemExit("Empty GGUF checksums")
+    for name, item in checks["files"].items():
+        if Path(name).name != name:
+            raise SystemExit("Invalid GGUF filename in checksums")
+        verify(root / name, item["bytes"], item["sha256"])
+    print("Downloaded native adaptive GGUF package; listed files SHA256 verified.")
+    raise SystemExit(0)
 
 checks = json.loads((root / "checksums.json").read_text())
 for name, item in checks["files"].items():
