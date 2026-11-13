@@ -1,6 +1,6 @@
 # Colab MCP + LookAtMyQuant pilot
 
-此目录提供 W-ModelForge 当前接入方案的 G4 配方。源码固定在本项目提交 `5ecf73f499d206fc004619a5625a1848263983d1`，使用 `methods/lookatmyquant/` 中已维护的代码；不再克隆旧上游后另打补丁。
+此目录提供 W-ModelForge 当前接入方案的 G4 配方。源码固定在本项目提交 `e69f4f1fd9edee81ca4e212ee45074ea47a83901`（见 `run_quantization.py` 的 `COMMIT`），使用 `methods/lookatmyquant/` 中已维护的代码；不再克隆旧上游后另打补丁。
 
 ## 本机连接
 

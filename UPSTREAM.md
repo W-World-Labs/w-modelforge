@@ -31,6 +31,8 @@ The trellis path retains the upstream trellis/LDLQ/Hadamard recipe with its cach
 
 ## Maintenance
 
+On 2026-11-13, downstream source maintenance added GitHub-only static CI: complete-history/tree secret scanning, source-size and distribution-scope gates, Python/JSON/Bash syntax and credential-free Colab CLI entrypoints. It preserves the four original fixed EMA codebooks by exact Git blob, clarifies optional dependency licenses, and aligns the Colab README with the recipe's existing source pin. No quantization implementation, model artifact or measured result changed; CI is not model/GPU or commercial acceptance.
+
 Use `upstream` for the original repository and `origin` for this fork. Keep downstream commits separate from the baseline; inspect future upstream changes before merging. Record the source commit, model revision, dtype, recipe, environment and output hashes for each run. Never substitute an unrecorded branch head into an existing run.
 
 The initial trellis builds used the previously deployed9B memory patch, with later source optimizations applied to the queued27B process; those builds are complete. A running process is not automatically updated by a Git push. Completed-layer counts and GPU readings are progress observations, not reproducibility or quality claims.

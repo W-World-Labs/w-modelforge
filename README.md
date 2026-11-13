@@ -16,6 +16,12 @@ The first integrated method is **LookAtMyQuant**. The project uses a direct meth
 - [Upstream and changes](UPSTREAM.md): fixed source baseline, downstream changes and maintenance rules.
 - [Third-party notices](NOTICE.md) / [license](LICENSE): separate terms for code, model weights and datasets.
 
+## Source validation
+
+[GitHub Actions](https://github.com/W-World-Labs/w-modelforge/actions/workflows/source.yml) is the CI surface for this public source distribution. It scans the complete public Git history and checkout with checksum-pinned Gitleaks 8.30.1, limits every historical blob to 10 MiB and the current source tree to 100 MiB, rejects model/data caches and engine binaries, and checks Python/JSON/Bash syntax plus credential-free Colab CLI help. Only the four unchanged upstream EMA codebooks are permitted as tensor files. No runtime dependencies are installed and no models, datasets, credentials or release artifacts are uploaded by CI.
+
+These are static source checks, not model-quality, GPU-performance, production or commercial-rights acceptance. The inherited unit/integration tests are retained for provenance and are not run. Local checkouts are for editing and metadata/secret review; CI validation runs on GitHub.
+
 Models are published under [Hugging Face / W-World-Labs](https://huggingface.co/W-World-Labs). Release requires file integrity, independent format-specific loading and actual inference, at least 90% relative correct-answer retention on the selected 216-problem math protocol, and PPL/KL review. Model cards disclose results, revisions, licenses and loading limits.
 
 ## Current results
