@@ -1,10 +1,8 @@
 name: Source checks
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+  release:
+    types: [released]
 
 permissions:
   contents: read
@@ -38,3 +36,5 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --ignore-gitleaks-allow --log-opts="--all --full-history" .
           "$RUNNER_TEMP/gitleaks" dir --redact --ignore-gitleaks-allow .
+          "$RUNNER_TEMP/gitleaks" git --redact --ignore-gitleaks-allow --log-opts="HEAD --full-history" upstream/lookatmyquant
+          "$RUNNER_TEMP/gitleaks" dir --redact --ignore-gitleaks-allow methods/lookatmyquant

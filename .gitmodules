@@ -1,0 +1,3 @@
+[submodule "upstream/lookatmyquant"]
+	path = upstream/lookatmyquant
+	url = https://github.com/ShinMegamiBoson/lookatmyquant.git

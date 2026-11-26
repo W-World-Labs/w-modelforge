@@ -9,6 +9,9 @@ release="$1"
 shift
 repo="${W_MODELFORGE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 loader="$repo/methods/lookatmyquant/load_packed.py"
+if [[ -f "$repo/scripts/prepare_lookatmyquant.sh" ]]; then
+  bash "$repo/scripts/prepare_lookatmyquant.sh"
+fi
 if [[ ! -f "$loader" ]]; then
   echo "Set W_MODELFORGE_ROOT to your W-ModelForge checkout; see inference/README.md." >&2
   exit 2

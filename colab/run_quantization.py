@@ -6,6 +6,7 @@ Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -58,7 +59,16 @@ def setup():
     WORK.mkdir(exist_ok=True)
     if not CHECKOUT.exists():
         run("git", "clone", SOURCE_REPO, CHECKOUT, cwd=ROOT)
+    if subprocess.run(["git", "cat-file", "-e", f"{COMMIT}^{{commit}}"], cwd=CHECKOUT,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+        run("git", "fetch", "origin", COMMIT, cwd=CHECKOUT)
     run("git", "checkout", "--detach", COMMIT, cwd=CHECKOUT)
+    upstream_commit = UPSTREAM_COMMIT
+    prepare_method = CHECKOUT / "scripts/prepare_lookatmyquant.sh"
+    if prepare_method.is_file():
+        run("bash", prepare_method, cwd=CHECKOUT)
+        upstream_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD:upstream/lookatmyquant"], cwd=CHECKOUT, text=True).strip()
     code_notices = OUTPUT / "code-source"
     code_notices.mkdir(exist_ok=True)
     for name in ("LICENSE", "NOTICE.md", "UPSTREAM.md"):
@@ -78,7 +88,7 @@ def setup():
     if gpu.total_memory < 88 * 1024**3:
         raise RuntimeError(f"These pilots require the 96 GB G4; got {gpu.name}.")
     save("environment.json", {"model": MODEL, "source_repo": SOURCE_REPO, "source_commit": COMMIT,
-                              "upstream_commit": UPSTREAM_COMMIT, "gpu": gpu.name,
+                              "upstream_commit": upstream_commit, "gpu": gpu.name,
                               "vram_bytes": gpu.total_memory, "torch": torch.__version__,
                               "dtype": DTYPE, "cpu_offload": CPU_OFFLOAD, "scope": "text-only",
                               "source_method": "methods/lookatmyquant",
@@ -173,13 +183,15 @@ def allocate(model_dir):
 
 
 def main():
-    global MODEL, MODEL_REVISION, ROOT, CHECKOUT, SOURCE, OUTPUT, WORK, REMOTE, DTYPE, CPU_OFFLOAD
+    global COMMIT, MODEL, MODEL_REVISION, ROOT, CHECKOUT, SOURCE, OUTPUT, WORK, REMOTE, DTYPE, CPU_OFFLOAD
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", choices=["Qwen/Qwen3.5-9B", "Qwen/Qwen3.8-27B"], default=MODEL)
     parser.add_argument("--drive-remote", default=os.environ.get("MODEL_FORGE_DRIVE_REMOTE"),
                         help="existing rclone remote name, without colon")
     parser.add_argument("--drive-directory", default="model-quantization")
     parser.add_argument("--run-id", default=time.strftime("%Y%m%d"))
+    parser.add_argument("--source-commit", default=COMMIT,
+                        help="full ModelForge commit SHA; defaults to the original pilot source")
     parser.add_argument("--calibration-batch", type=int, default=None)
     parser.add_argument("--eval-max-new", type=int, choices=[1024, 2048], default=1024)
     parser.add_argument("--stage", choices=["setup", "calibrate", "allocate", "build", "pack", "evaluate", "sync", "all"], default="all")
@@ -188,6 +200,9 @@ def main():
         parser.error("set --drive-remote or MODEL_FORGE_DRIVE_REMOTE to an existing rclone remote name")
     if not args.run_id or "/" in args.run_id or args.run_id in (".", ".."):
         parser.error("--run-id must be one non-empty directory name")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
+        parser.error("--source-commit must be a full lowercase Git SHA")
+    COMMIT = args.source_commit
     if args.calibration_batch is not None and args.calibration_batch < 1:
         parser.error("--calibration-batch must be positive")
     is_27b = args.model == "Qwen/Qwen3.8-27B"
@@ -206,6 +221,10 @@ def main():
     ROOT.mkdir(parents=True, exist_ok=True)
     OUTPUT.mkdir(exist_ok=True)
     WORK.mkdir(exist_ok=True)
+    receipt = OUTPUT / "environment.json"
+    if (receipt.is_file() and args.stage != "sync"
+            and json.loads(receipt.read_text()).get("source_commit") != COMMIT):
+        parser.error("use the original --source-commit for this run or choose a new --run-id")
     if args.stage == "sync":
         sync()
         return

@@ -1,0 +1,2335 @@
+diff --git a/base/.gitignore b/current/.gitignore
+index c0ff9db..930cfd9 100644
+--- a/base/.gitignore
++++ b/current/.gitignore
+@@ -11,3 +11,14 @@ cache/codes/*
+ !results/completeness_*.log
+ runtime_mlx/ref/
+ !cache/codes/trellis_L12_k[1-4]_T256_s0_ema.pt
++
++# Local Colab identities, run state, artifacts and credentials
++.venv/
++.colab-state*.json
++.colab-state*.json.tmp
++colab/runs/
++colab/STATUS.json
++colab/.colab-state*.json
++colab/*rclone*.conf
++.env
++.env.*
+diff --git a/base/LICENSE b/current/LICENSE
+index 8a35f6b..f04f84e 100644
+--- a/base/LICENSE
++++ b/current/LICENSE
+@@ -1,6 +1,7 @@
+ MIT License
+ 
+ Copyright (c) 2026 Shin Megami Boson
++Copyright (c) 2026 W-World-Labs contributors (modifications only)
+ 
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+diff --git a/base/README.md b/current/README.md
+index ed37971..f1c3845 100644
+--- a/base/README.md
++++ b/current/README.md
+@@ -1,3 +1,68 @@
++# LookAtMyQuant — W-ModelForge method
++
++这是 [W-ModelForge](https://github.com/W-World-Labs/w-modelforge) 维护的一种实验性方法，基于 **Shin Megami Boson** 的 [LookAtMyQuant](https://github.com/ShinMegamiBoson/lookatmyquant)。原始量化编译器、LookAtMyQuant 2 配方和下方的 4B 成绩均来自上游；不表示上游或 Qwen 对本分支的背书。
++
++本分支增加 Qwen3.5-9B / Qwen3.8-27B 文本 PTQ 试跑、逐层 CPU/GPU 卸载、BF16 参数支持、GPU trellis 状态恢复和同 stage 的 Hessian 分解复用。Colab 运行时通过 [Google 官方托管 MCP](https://developers.google.com/colab/api/reference/mcp) 管理，产物通过 rclone 回传。
++
++- [Colab 使用说明](../../colab/README.md)：身份配置、执行、断线重连和产物说明。
++- [上游来源与改动](../../UPSTREAM.md)：固定基线、修改范围和维护方式。
++- [版权及第三方说明](../../NOTICE.md) / [MIT 许可证](LICENSE)：代码、模型和数据分别标注来源与许可。
++
++**当前状态（2026-11-12）**：9B 正在逐层量化；3.8-27B 已下载并准备环境，等待串行运行。尚无本分支完整模型的大小、性能保留率或整体加速结论。当前配方只做文本 PTQ，不含蒸馏；自定义 packed 格式也不是 GGUF 或标准 Transformers 权重。静态检查和实机模型评估用于核验；本分支不新增单元或集成测试。
++
++## 加载本分支 packed 权重
++
++在此目录安装依赖后，`load_packed.py` 可直接读取包含 `artifact.json`、`weights.bin`、配置与 tokenizer 的目录，无需下载原始模型权重：
++
++```python
++from load_packed import load_packed
++model = load_packed("/path/to/packed", dtype="float32", device="cuda", decode_device="cuda")
++```
++
++9B 使用 `float32`，27B 使用 `bfloat16`，与各自量化构建保持一致。也可执行 `python load_packed.py /path/to/packed --dtype bfloat16 --device cuda --decode-device cuda --prompt '计算 123 × 456，并写出过程。'`；`--prompt` 可重复指定。模型直接在请求的设备真实初始化 rotary buffer 和参数，再逐矩阵还原填充；CUDA 加载避免在主机保留整份初始化模型；默认 CPU 解码，`decode_device="cuda"` 可加速当前矩阵的还原。
++
++这是**展开权重的 Torch 参考加载器**：会占用完整 FP32/BF16 模型的内存，不代表压缩格式的高速推理。加载时校验文件哈希、参数覆盖、形状和有限值，并恢复混合行组、嵌入/输出头桶、未编码 BF16 参数及共享权重。权重可用性还需实际前向、与 `dense.pt` 的 logits 对比及加载 packed 后的独立数学评估；这些结果尚未完成。旧 `runtime_mlx/model.py` 读取的是另一种 `lamq.json`/`model.safetensors` 格式。
++
++## 保留原始 BF16 视觉组件
++
++可用 `python extract_vision.py --model-path /path/to/original-snapshot --model-id Qwen/Qwen3.5-9B --out /path/to/vision-assets` 原样提取视觉张量和预处理资产，并记录每个张量及文件哈希。
++
++语言量化无需重做。把同一原始模型 revision 的完整 `model.visual.*` 权重（包含视觉编码器和 merger/projector，保留原名称及 BF16）另存为仓库根目录 `vision.safetensors`，并在根目录保留完整原始配置、tokenizer/chat-template，以及 `processor_config.json`、`preprocessor_config.json`、`video_preprocessor_config.json` 等原 processor 资产（以原模型实际存在文件为准）。这些额外资产放在 `packed/` 之外，以保留原 packed manifest 和哈希。
++
++```python
++from pathlib import Path
++from transformers import AutoProcessor
++from load_packed import load_packed
++
++root = Path("/path/to/downloaded/repository")
++model = load_packed(root / "packed", dtype="float32", device="cuda", decode_device="cuda",
++                    vision_file=root / "vision.safetensors")  # 27B language: dtype="bfloat16"
++processor = AutoProcessor.from_pretrained(root, local_files_only=True)
++messages = [{"role": "user", "content": [
++    {"type": "image", "image": "/absolute/path/to/image.png"},
++    {"type": "text", "text": "Describe this image."},
++]}]
++inputs = processor.apply_chat_template(messages, tokenize=True, add_generation_prompt=True,
++                                      enable_thinking=False, return_dict=True, return_tensors="pt").to("cuda")
++outputs = model.generate(**inputs, do_sample=False, max_new_tokens=128)
++print(processor.batch_decode(outputs[:, inputs.input_ids.shape[1]:], skip_special_tokens=True))
++```
++
++也可在命令行使用 `--vision-file /path/to/vision.safetensors --processor-dir /path/to/repository --image /path/to/image.png --prompt '描述图片。'`。加载器只构造一次完整多模态 wrapper，复用现有 packed 语言权重还原，并检查原始视觉的参数覆盖、形状、BF16 dtype 和有限值；不量化视觉权重，不把视觉的 FP32 非持久 rotary buffers 改为 BF16。官方前向会把像素转为视觉 dtype、把视觉特征转为语言 embedding dtype，processor 返回的 `mm_token_type_ids` 必须保留。9B已完成实际模型验证：333个视觉张量原字节hash全部相同，两张颜色图片分别答red/blue；与dense量化参考的4×128语言KL约1.205e-11、top1和四条32-token提示一致。27B待其语言构建和评估完成后验证。文本数学结果不代表视觉质量，两张图片不构成广泛视觉基准，也没有视频质量或速度结论。
++
++发布前可在 CUDA 上分两个进程执行实际模型评估，9B 使用下列 dtype 和 batch；27B 分别改为 `bfloat16` 和 `8`，并使用其模型专属 cache tag：
++
++```sh
++python release_validation.py --phase reference --model-path /path/to/original --dense /path/to/dense.pt --work-dir /path/to/work --out /path/to/reference.json --dtype float32 --cache-tag qwen3.5-9b
++python release_validation.py --phase packed --packed /path/to/packed --work-dir /path/to/work --out /path/to/release-validation.json --dtype float32 --cache-tag qwen3.5-9b --batch 4 --max-new 1024 --baseline-math /path/to/math216.json
++```
++
++`reference` 依次捕获原始模型与原位加载 dense 后的同一组固定 WikiText 留出窗口，缓存 logprobs、PPL、四条公开英/中/代码/数学提示的32-token贪心结果及哈希；`packed` 不读取原始权重，独立加载打包权重，比较数值和生成结果，并直接运行同一216题数学评估。4×128 的额外窗口只用于一致性与小样本检查，不替代主流程的8/16×512评估。`--max-new` 可选1024或2048；`--baseline-math` 必须是相同 dtype、题目、生成上限与贪心/no-thinking配方的原始模型结果；报告计算90%数学保留门槛，PPL/KL及最终发布仍需人工审阅。此命令不会上传 HF，也不会写发布完成标记。
++
++---
++
++以下为保留的上游说明，其 “our run” 和已公布成绩均指上游作者的实验。
++
+ # LookAtMyQuant
+ 
+ LookAtMyQuant is a quantization compiler. It measures how much each stored piece of a model hurts the output when compressed. It then picks a code for each piece so the whole model fits a size budget with the least damage.
+diff --git a/current/compare_math_caps.py b/current/compare_math_caps.py
+new file mode 100644
+index 0000000..3ee2897
+--- /dev/null
++++ b/current/compare_math_caps.py
+@@ -0,0 +1,337 @@
++"""Incremental math216 evaluation, one original or packed GPU model per process.
++
++--output is a dedicated directory containing original.json, packed.json and
++comparison.json. Re-run the identical command to resume complete saved batches.
++27B uses BF16/batch 8 with --max-new 2048 4096; 9B uses FP32/batch 4 with
++--max-new 4096. Each cap generates its own answers; no answer is truncated from
++another cap. Optional rclone copies/checks only those three small JSON reports.
++"""
++
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++# Reuses Shin Megami Boson's LookAtMyQuant generation and scoring (MIT).
++
++from __future__ import annotations
++
++import argparse
++import copy
++import hashlib
++import json
++import math
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import time
++
++from row_allocation import _write_json, file_sha256, load_original_model
++
++SOURCE = Path(__file__).resolve().parent
++PROTOCOL = SOURCE / "results/protocols/math216.json"
++REPORTS = ("original.json", "packed.json", "comparison.json")
++COMMON_TEXT_ASSETS = ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
++OPTIONAL_TEXT_ASSETS = ("special_tokens_map.json", "added_tokens.json",
++                       "chat_template.json", "vocab.json", "merges.txt")
++SOURCES = ("compare_math_caps.py", "math_eval.py", "math_bench.py", "row_allocation.py",
++           "load_packed.py", "compiler_artifact.py", "opgraph/hadamard.py")
++SCHEDULE = {"Qwen/Qwen3.8-27B": ("bfloat16", 8, [2048, 4096]),
++            "Qwen/Qwen3.5-9B": ("float32", 4, [4096])}
++LEGACY_DRIVER_SHA256 = "6e5e12cf179288dc63a5282090a5cf0db7b345e90b81b4a62c8fdcb15a0c665b"  # 3e08e36
++
++
++def digest(value):
++    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
++                                     ensure_ascii=False, allow_nan=False).encode()).hexdigest()
++
++
++def compatible_common(saved, current):
++    """Allow only the known JSON-validation repair; all generation inputs stay exact."""
++    if saved == current:
++        return True
++    if not isinstance(saved, dict) or not isinstance(current, dict):
++        return False
++    left, right = copy.deepcopy(saved), copy.deepcopy(current)
++    old_driver = left.get("source_sha256", {}).pop("compare_math_caps.py", None)
++    new_driver = right.get("source_sha256", {}).pop("compare_math_caps.py", None)
++    allowed = {LEGACY_DRIVER_SHA256, file_sha256(SOURCE / "compare_math_caps.py")}
++    return left == right and {old_driver, new_driver} == allowed
++
++
++def hashed_files(root, names):
++    files = {}
++    for name in sorted(names):
++        if Path(name).name != name:
++            raise ValueError(f"expected a direct checkpoint filename: {name}")
++        path = root / name
++        before = path.stat()
++        print(f"Hashing {name} ({before.st_size} bytes)", flush=True)
++        checksum = file_sha256(path)
++        after = path.stat()
++        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
++            raise ValueError(f"source changed while hashing: {name}")
++        files[name] = {"bytes": after.st_size, "sha256": checksum}
++    return files
++
++
++def model_weights(root, kind):
++    if kind == "packed":
++        return hashed_files(root, ("artifact.json", "weights.bin"))
++    index = root / "model.safetensors.index.json"
++    if index.exists():
++        names = set(json.loads(index.read_text())["weight_map"].values())
++        names.add(index.name)
++    else:
++        names = {"model.safetensors"}
++    return hashed_files(root, names)
++
++
++def validate_report(report, common, problems, scorer, summarize, kind):
++    fingerprint = report["fingerprint"]
++    if (report.get("schema") != 1 or report.get("kind") != kind
++            or not compatible_common(fingerprint["common"], common)
++            or report.get("fingerprint_sha256") != digest(fingerprint)
++            or report.get("state") not in ("running", "completed")):
++        raise ValueError(f"{kind} report fingerprint/schema differs; refusing to overwrite")
++    caps = report["caps"]
++    if set(caps) != {str(cap) for cap in common["max_new_tokens"]}:
++        raise ValueError(f"{kind} cap set changed")
++    by_id = {p["id"]: p for p in problems}
++    ordered = [key for batch in common["batch_ids"] for key in batch]
++    boundaries = [0]
++    for batch in common["batch_ids"]:
++        boundaries.append(boundaries[-1] + len(batch))
++    unfinished = False
++    for cap in common["max_new_tokens"]:
++        saved = caps[str(cap)]
++        rows = saved["rows"]
++        n = len(rows)
++        if (n not in boundaries or set(rows) != set(ordered[:n])
++                or saved["completed_batches"] != boundaries.index(n)
++                or (unfinished and n)):
++            raise ValueError(f"{kind}/{cap}: rows must be a prefix of complete original batches")
++        if (saved["state"] not in ("pending", "running", "completed")
++                or (saved["state"] == "completed") != (n == len(problems))
++                or (saved["state"] == "pending" and n)
++                or not isinstance(saved["seconds"], (int, float))
++                or not math.isfinite(saved["seconds"]) or saved["seconds"] < 0):
++            raise ValueError(f"{kind}/{cap}: invalid state or timing")
++        for key, row in rows.items():
++            tokens = row["tokens"]
++            if (type(tokens) is not int or not 0 <= tokens <= cap
++                    or type(row["correct"]) is not bool or type(row["finished"]) is not bool
++                    or row["finished"] != (tokens < cap) or not isinstance(row["text"], str)
++                    or row["end"] != row["text"][-200:]
++                    or row["question"] != by_id[key]["question"]
++                    or row["expected_answer"] != by_id[key]["answer"]):
++                raise ValueError(f"{kind}/{cap}: invalid saved row {key}")
++            correct, answer = scorer(by_id[key], row["text"]) if tokens < cap else (False, None)
++            if (row["correct"], row["answer"]) != (correct, answer):
++                raise ValueError(f"{kind}/{cap}: saved score differs for {key}")
++        expected = summarize([by_id[key] for key in ordered[:n]], rows) if n else None
++        expected = json.loads(json.dumps(expected))  # JSON turns integer difficulty keys into strings.
++        if saved["summary"] != expected:
++            raise ValueError(f"{kind}/{cap}: summary differs from saved rows")
++        unfinished |= n < len(problems)
++    if (report["state"] == "completed") != all(c["state"] == "completed" for c in caps.values()):
++        raise ValueError(f"{kind}: inconsistent completion state")
++
++
++def comparison(output, reports, common):
++    result = {"schema": 1, "state": "running", "common": common,
++              "common_sha256": digest(common), "reports": {}, "caps": {},
++              "driver_compatibility": {
++                  "legacy_sha256": LEGACY_DRIVER_SHA256,
++                  "current_sha256": file_sha256(SOURCE / "compare_math_caps.py"),
++                  "note": "JSON validation fix only; generation/scoring/loader files must match exactly. "
++                          "Each report keeps its true initial fingerprint and driver SHA256."}}
++    for kind, report in reports.items():
++        result["reports"][kind] = {"file": f"{kind}.json",
++                                   "sha256": file_sha256(output / f"{kind}.json"),
++                                   "fingerprint_sha256": report["fingerprint_sha256"],
++                                   "driver_sha256": report["fingerprint"]["common"]["source_sha256"]["compare_math_caps.py"]}
++    for cap in common["max_new_tokens"]:
++        item = {}
++        for kind in ("original", "packed"):
++            saved = reports.get(kind, {}).get("caps", {}).get(str(cap))
++            item[kind + "_completed_rows"] = len(saved["rows"]) if saved else 0
++            item[kind] = saved["summary"] if saved and saved["state"] == "completed" else None
++        ready = item["original"] is not None and item["packed"] is not None
++        original_right = item["original"]["right"] if ready else 0
++        item.update(state="completed" if ready else "running",
++                    relative_retention=item["packed"]["right"] / original_right
++                    if ready and original_right else None)
++        if ready and not original_right:
++            item["retention_note"] = "Original score is zero; relative retention is undefined."
++        result["caps"][str(cap)] = item
++    result["state"] = ("completed" if all(c["state"] == "completed" for c in result["caps"].values())
++                       else "running")
++    return result
++
++
++def sync_reports(output, remote):
++    if not remote:
++        return
++    # Only these exact report names are eligible; logs, models and credentials
++    # cannot be copied even if a caller places other files in the output folder.
++    filters = [part for name in REPORTS for part in ("--filter", "+ /" + name)]
++    filters += ["--filter", "- **"]
++    log = output.parent / (output.name + ".rclone.log")
++    with log.open("ab") as stream:
++        for command in (
++            ["rclone", "copy", str(output), remote, *filters, "--transfers", "1", "--checkers", "2"],
++            ["rclone", "check", str(output), remote, *filters, "--one-way", "--checkers", "2"],
++        ):
++            subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True)
++    print("Small-report rclone copy/check completed", flush=True)
++
++
++def persist(output, report, reports, common, remote):
++    report["state"] = ("completed" if all(c["state"] == "completed" for c in report["caps"].values())
++                       else "running")
++    _write_json(output / f"{report['kind']}.json", report)
++    reports[report["kind"]] = report
++    result = comparison(output, reports, common)
++    _write_json(output / "comparison.json", result)
++    sync_reports(output, remote)
++    return result
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument("--kind", choices=["original", "packed"], required=True)
++    parser.add_argument("--model-path", type=Path, help="original local HF snapshot; required for original")
++    parser.add_argument("--packed", type=Path, help="artifact.json/weights.bin directory; required for packed")
++    parser.add_argument("--model-id", choices=list(SCHEDULE), required=True, help="base Qwen model ID")
++    parser.add_argument("--dtype", choices=["float32", "bfloat16"], required=True)
++    parser.add_argument("--batch", type=int, required=True)
++    parser.add_argument("--max-new", type=int, choices=[2048, 4096], nargs="+", required=True)
++    parser.add_argument("--output", type=Path, required=True, help="dedicated report directory; identical args resume")
++    parser.add_argument("--rclone-remote", help="dedicated remote:subdirectory for the small JSON reports only")
++    args = parser.parse_args()
++    if len(args.max_new) != len(set(args.max_new)):
++        parser.error("--max-new contains duplicates")
++    args.max_new = sorted(args.max_new)
++    if (args.dtype, args.batch, args.max_new) != SCHEDULE[args.model_id]:
++        parser.error("this run uses 27B BF16/batch8/caps2048+4096 or 9B FP32/batch4/cap4096")
++    source = args.model_path if args.kind == "original" else args.packed
++    if source is None:
++        parser.error("original needs --model-path; packed needs --packed")
++    source = source.resolve()
++    if not (source / "config.json").is_file():
++        parser.error("the selected model directory needs config.json")
++    if args.rclone_remote:
++        remote, separator, subdirectory = args.rclone_remote.partition(":")
++        if not remote or not separator or not subdirectory.strip("/") or shutil.which("rclone") is None:
++            parser.error("--rclone-remote needs an installed rclone and a dedicated remote:subdirectory")
++    args.output = args.output.resolve()
++    args.output.mkdir(parents=True, exist_ok=True)
++
++    # Lock and rclone logs live outside the report folder and are never synced.
++    import fcntl
++    with (args.output.parent / (args.output.name + ".lock")).open("a+") as lock:
++        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
++        import numpy
++        import torch
++        import transformers
++        from transformers import AutoTokenizer
++        from math_eval import B, solve, summary
++        from load_packed import load_packed
++
++        if not torch.cuda.is_available():
++            parser.error("this matched evaluation requires CUDA")
++        torch.backends.cuda.matmul.allow_tf32 = False
++        torch.backends.cudnn.allow_tf32 = False
++        torch.manual_seed(0)
++        problems = json.loads(PROTOCOL.read_text())["problems"]
++        if len(problems) != 216 or len({p["id"] for p in problems}) != 216 or not all(B.check(p) for p in problems):
++            raise ValueError("expected the unchanged 216-problem protocol")
++        tokenizer = AutoTokenizer.from_pretrained(source, padding_side="left", local_files_only=True)
++        if tokenizer.pad_token_id is None:
++            tokenizer.pad_token = tokenizer.eos_token
++        # Preserve solve's global ordering before calling it one complete batch
++        # at a time, so incremental checkpoints do not change batch membership.
++        prompts = [tokenizer.apply_chat_template(
++            [{"role": "user", "content": f"{p['question']}\n\n{B.INSTRUCTION}"}],
++            tokenize=False, add_generation_prompt=True, enable_thinking=False) for p in problems]
++        order = sorted(range(len(problems)), key=lambda i: (len(prompts[i]), problems[i]["id"]))
++        ordered = [problems[i] for i in order]
++        batches = [ordered[start:start + args.batch] for start in range(0, len(ordered), args.batch)]
++        common = {"model_id": args.model_id, "dtype": args.dtype, "batch": args.batch,
++                  "max_new_tokens": args.max_new, "thinking": False, "greedy": True, "tf32": False, "seed": 0,
++                  "protocol_sha256": file_sha256(PROTOCOL),
++                  "text_assets": hashed_files(source, COMMON_TEXT_ASSETS),
++                  "generation_config": (hashed_files(source, ("generation_config.json",))["generation_config.json"]
++                                        if (source / "generation_config.json").is_file() else None),
++                  "source_sha256": {name: file_sha256(SOURCE / name) for name in SOURCES},
++                  "batch_ids": [[p["id"] for p in batch] for batch in batches],
++                  "environment": {"torch": torch.__version__, "transformers": transformers.__version__,
++                                  "numpy": numpy.__version__, "cuda": torch.version.cuda,
++                                  "gpu": torch.cuda.get_device_name(0)}}
++        fingerprint = {
++            "common": common, "weights": model_weights(source, args.kind),
++            "optional_text_assets": hashed_files(
++                source, [name for name in OPTIONAL_TEXT_ASSETS if (source / name).is_file()]),
++        }
++        reports = {}
++        for kind in ("original", "packed"):
++            path = args.output / f"{kind}.json"
++            if path.exists():
++                reports[kind] = json.loads(path.read_text())
++                validate_report(reports[kind], common, problems, B.score, summary, kind)
++        old_comparison = args.output / "comparison.json"
++        if old_comparison.exists():
++            old = json.loads(old_comparison.read_text())
++            if not compatible_common(old.get("common"), common) or any(kind not in reports for kind in old.get("reports", {})):
++                raise ValueError("comparison fingerprint/source report differs; refusing to overwrite")
++        report = reports.get(args.kind)
++        if report is not None:
++            saved = report["fingerprint"]
++            if (not compatible_common(saved["common"], fingerprint["common"])
++                    or {k: v for k, v in saved.items() if k != "common"}
++                    != {k: v for k, v in fingerprint.items() if k != "common"}):
++                raise ValueError("model weights/config/source fingerprint changed; refusing to overwrite")
++        if report is None:
++            report = {"schema": 1, "kind": args.kind, "state": "running",
++                      "fingerprint": fingerprint, "fingerprint_sha256": digest(fingerprint),
++                      "scope": "Math-only; each cap is generated independently; no PPL/parity/vision rerun",
++                      "caps": {str(cap): {"state": "pending", "completed_batches": 0, "seconds": 0.0,
++                                          "summary": None, "rows": {}} for cap in args.max_new}}
++        persist(args.output, report, reports, common, args.rclone_remote)
++        if report["state"] != "completed":
++            model = (load_original_model(source, dtype=args.dtype, device="cuda")
++                     if args.kind == "original" else
++                     load_packed(source, dtype=args.dtype, device="cuda", decode_device="cuda"))
++            try:
++                by_id = {p["id"]: p for p in problems}
++                for cap in args.max_new:
++                    saved = report["caps"][str(cap)]
++                    for batch in batches[saved["completed_batches"]:]:
++                        started = time.perf_counter()
++                        rows = solve(model, tokenizer, batch, args.batch, cap, thinking=False, keep_text=True)
++                        if set(rows) != {p["id"] for p in batch}:
++                            raise ValueError("solve did not return one complete requested batch")
++                        for key, row in rows.items():
++                            row.update(question=by_id[key]["question"], expected_answer=by_id[key]["answer"])
++                        saved["rows"].update(rows)
++                        saved["completed_batches"] += 1
++                        saved["seconds"] += time.perf_counter() - started
++                        done = len(saved["rows"])
++                        saved["state"] = "completed" if done == len(problems) else "running"
++                        saved["summary"] = summary([p for p in ordered if p["id"] in saved["rows"]], saved["rows"])
++                        persist(args.output, report, reports, common, args.rclone_remote)
++                        print(f"{args.kind} cap={cap}: {done}/216; "
++                              f"{saved['summary']['right']} right, "
++                              f"{saved['summary']['hit the token limit']} at cap", flush=True)
++            finally:
++                del model
++                torch.cuda.empty_cache()
++        result = comparison(args.output, reports, common)
++        for cap, item in result["caps"].items():
++            counts = {kind: ({"right": item[kind]["right"], "of": item[kind]["of"],
++                             "hit_token_limit": item[kind]["hit the token limit"]}
++                            if item[kind] else None) for kind in ("original", "packed")}
++            print(f"cap={cap}: {counts}; relative_retention={item['relative_retention']}", flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/base/compiler.py b/current/compiler.py
+index cbe0bc2..83b257a 100644
+--- a/base/compiler.py
++++ b/current/compiler.py
+@@ -486,8 +486,10 @@ def price(r, t):
+     """One option's cost under target t, in bits per decoded token (stored bits for disk)."""
+     if r["kind"] == "kv":
+         return t["ctx"] * r["kv bits per token"]
+-    import quantize as rq
+-    fam = rq.parse(r["option"])[0] if (r["option"] == "fp16" or rq.PROGRAM.fullmatch(str(r["option"]))) else "other"
++    fam = "other"
++    if "gguf tensor" not in r:
++        import quantize as rq
++        fam = rq.parse(r["option"])[0] if (r["option"] == "fp16" or rq.PROGRAM.fullmatch(str(r["option"]))) else "other"
+     return (r["bits"] + t["ops"] * OPS.get(fam, 2.0) * r["weights"]) / t["batch"]
+ 
+ 
+@@ -526,6 +528,8 @@ def program_of(r, cross=True):
+     o = str(r["option"])
+     if r["kind"] == "kv":
+         return int(o)
++    if "gguf tensor" in r:
++        return o
+     import quantize as rq  # only our own codes take the cross-term target (llama.cpp types are named as llama.cpp does)
+     ours = rq.PROGRAM.fullmatch(o) is not None
+     return o + "x" if r["kind"] in ("linear", "experts") and cross and ours else o
+diff --git a/base/compiler_artifact.py b/current/compiler_artifact.py
+index 688c5bf..b3fc1f8 100644
+--- a/base/compiler_artifact.py
++++ b/current/compiler_artifact.py
+@@ -8,6 +8,8 @@ immutable shared views; they are separate from tied model-state aliases.
+ Imports stay lightweight so the allocator can price shapes without torch/MLX.
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import hashlib
+@@ -419,7 +421,8 @@ def export_saved_codes(saved, out, *, dense_tensors, model_dir=None):
+     assets = {}
+     if model_dir is not None:
+         for name in ('config.json', 'generation_config.json', 'tokenizer.json', 'tokenizer_config.json',
+-                     'special_tokens_map.json', 'chat_template.jinja', 'tokenizer.model'):
++                     'special_tokens_map.json', 'chat_template.jinja', 'tokenizer.model',
++                     'LICENSE', 'LICENSE.txt', 'NOTICE', 'NOTICE.txt'):
+             source = Path(model_dir) / name
+             if source.exists():
+                 assets[name] = source
+diff --git a/current/export_hf.py b/current/export_hf.py
+new file mode 100644
+index 0000000..04a6aba
+--- /dev/null
++++ b/current/export_hf.py
+@@ -0,0 +1,71 @@
++"""Expand a released packed model into a standard, full multimodal HF checkpoint.
++
++This preserves the language build dtype and original BF16 vision. It does not
++produce native low-bit vLLM weights or a GGUF file.
++"""
++
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++
++import argparse
++import hashlib
++import json
++from pathlib import Path
++import shutil
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("release", type=Path)
++    parser.add_argument("output", type=Path, help="new directory; never overwrites an existing checkpoint")
++    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
++    parser.add_argument("--decode-device", choices=["cpu", "cuda"], default="cpu")
++    parser.add_argument("--max-shard-size", default="4GB")
++    args = parser.parse_args()
++    if args.output.exists():
++        parser.error("output directory already exists")
++    evaluation = json.loads((args.release / "evaluation.json").read_text())
++    vision = json.loads((args.release / "vision-provenance.json").read_text())
++    if (vision["quantized"] or vision["dtype_conversion"]
++            or vision["source_model"] != evaluation["model"]
++            or vision["source_revision"] != evaluation["base_revision"]):
++        parser.error("original vision provenance does not match this release")
++    vision_path = args.release / "vision.safetensors"
++    digest = hashlib.sha256()
++    with vision_path.open("rb") as source:
++        for block in iter(lambda: source.read(8 << 20), b""):
++            digest.update(block)
++    if digest.hexdigest() != vision["weights_sha256"]:
++        parser.error("original vision SHA256 mismatch")
++
++    from transformers import AutoProcessor
++    from load_packed import load_packed
++
++    model = load_packed(args.release / "packed", dtype=evaluation["build_dtype"],
++                        device=args.device, decode_device=args.decode_device, vision_file=vision_path)
++    # Serialize on CPU, retaining per-parameter dtypes and the original visual values.
++    model.to("cpu")
++    args.output.mkdir(parents=True)
++    model.save_pretrained(args.output, safe_serialization=True, max_shard_size=args.max_shard_size)
++    # save_pretrained infers the top-level dtype from the first parameter, which
++    # can be BF16 vision even when the language checkpoint is FP32.
++    model.config.dtype = evaluation["build_dtype"]
++    model.config.text_config.dtype = evaluation["build_dtype"]
++    model.config.vision_config.dtype = "bfloat16"
++    model.config.save_pretrained(args.output)
++    AutoProcessor.from_pretrained(args.release, local_files_only=True).save_pretrained(args.output)
++    for name in ("LICENSE", "ATTRIBUTION.md", "MODEL_MODIFICATIONS.md"):
++        source = args.release / name
++        if source.is_file():
++            shutil.copyfile(source, args.output / name)
++    receipt = {"source_model": evaluation["model"], "source_revision": evaluation["base_revision"],
++               "language_dtype": evaluation["build_dtype"], "visual_dtype": "bfloat16",
++               "vision_source_sha256": vision["weights_sha256"],
++               "language_manifest_sha256": hashlib.sha256((args.release / "packed/artifact.json").read_bytes()).hexdigest(),
++               "format": "standard dense Hugging Face safetensors; expanded quantized values",
++               "warning": "Engine dtype conversion, GGUF conversion and subsequent requantization need separate evaluation."}
++    (args.output / "w-modelforge-export.json").write_text(json.dumps(receipt, indent=2) + "\n")
++    print(f"Expanded full multimodal checkpoint saved to {args.output}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/current/extract_vision.py b/current/extract_vision.py
+new file mode 100644
+index 0000000..d8ef42c
+--- /dev/null
++++ b/current/extract_vision.py
+@@ -0,0 +1,74 @@
++"""Preserve original Qwen3.5/3.8 vision tensors and processor assets without quantization."""
++
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++
++from pathlib import Path
++import argparse
++import hashlib
++import json
++import shutil
++
++import torch
++from safetensors import safe_open
++from safetensors.torch import save_file
++
++from compiler_artifact import file_sha256
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--model-path", type=Path, required=True)
++    parser.add_argument("--model-id", required=True)
++    parser.add_argument("--out", type=Path, required=True)
++    args = parser.parse_args()
++    source, output = args.model_path, args.out
++    config = json.loads((source / "config.json").read_text())
++    if not config.get("vision_config"):
++        raise ValueError("Expected the original multimodal config with vision_config")
++    weight_map = json.loads((source / "model.safetensors.index.json").read_text())["weight_map"]
++    names = sorted(name for name in weight_map if name.startswith("model.visual."))
++    if not names:
++        raise ValueError("The original checkpoint contains no model.visual tensors")
++    output.mkdir(parents=True, exist_ok=False)
++    tensors, records = {}, {}
++    for shard in sorted({weight_map[name] for name in names}):
++        if Path(shard).name != shard:
++            raise ValueError("Expected a local checkpoint shard basename")
++        with safe_open(source / shard, framework="pt", device="cpu") as file:
++            for name in (name for name in names if weight_map[name] == shard):
++                tensor = file.get_tensor(name).contiguous()
++                tensors[name] = tensor
++                records[name] = {"shape": list(tensor.shape), "dtype": str(tensor.dtype),
++                                 "bytes": tensor.numel() * tensor.element_size(),
++                                 "sha256": hashlib.sha256(tensor.reshape(-1).view(torch.uint8).numpy()).hexdigest(),
++                                 "source_shard": shard}
++    weights = output / "vision.safetensors"
++    save_file(tensors, weights, metadata={"format": "pt", "component": "original unquantized vision encoder and merger",
++                                        "source_model": args.model_id, "source_revision": source.name})
++    assets = ("config.json", "processor_config.json", "preprocessor_config.json", "video_preprocessor_config.json",
++              "tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt",
++              "special_tokens_map.json", "chat_template.jinja",
++              "generation_config.json")
++    copied = {}
++    for name in assets:
++        path = source / name
++        if path.is_file():
++            shutil.copyfile(path, output / name)
++            copied[name] = {"bytes": path.stat().st_size, "sha256": file_sha256(path)}
++    if not any(name in copied for name in ("processor_config.json", "preprocessor_config.json")):
++        raise ValueError("Original image processor config is required")
++    receipt = {"source_model": args.model_id, "source_revision": source.name,
++               "component": "All original model.visual tensors, including the vision encoder and merger/projector",
++               "quantized": False, "dtype_conversion": False, "tensors": records,
++               "tensor_bytes": sum(record["bytes"] for record in records.values()),
++               "weights_file": weights.name, "weights_bytes": weights.stat().st_size,
++               "weights_sha256": file_sha256(weights), "assets": copied,
++               "validation": "Extracted tensor byte hashes recorded; image inference is a separate release check"}
++    (output / "vision-provenance.json").write_text(json.dumps(receipt, indent=2) + "\n")
++    print(json.dumps({key: receipt[key] for key in ("source_model", "source_revision", "quantized", "tensor_bytes",
++                                                  "weights_bytes", "weights_sha256")}))
++    print("Preserved", len(records), "original vision tensors and", len(copied), "processor/tokenizer assets")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/base/gguf_compiler.py b/current/gguf_compiler.py
+index b193cd2..f981cb0 100644
+--- a/base/gguf_compiler.py
++++ b/current/gguf_compiler.py
+@@ -20,11 +20,13 @@ from __future__ import annotations
+ 
+ import argparse
+ import glob
++import hashlib
+ import json
+ import math
+ import os
+ import re
+ import subprocess
++import sys
+ import time
+ from pathlib import Path
+ 
+@@ -55,37 +57,48 @@ def sh(cmd, **kw):
+     return p.stdout + p.stderr
+ 
+ 
+-def model_dir(repo):
+-    return glob.glob(str(HF / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / "*/"))[0]
++def model_dir(repo, local=""):
++    if local:
++        return str(Path(local).resolve(strict=True))
++    snapshots = glob.glob(str(HF / "hub" / f"models--{repo.replace('/', '--')}" / "snapshots" / "*/"))
++    if len(snapshots) != 1:
++        raise ValueError("specify --model-path for an exact cached revision")
++    return snapshots[0]
+ 
+ 
+-def work(repo):
+-    w = HF / "gguf" / repo.split("/")[-1]
++def work(repo, directory=""):
++    w = Path(directory) if directory else HF / "gguf" / repo.split("/")[-1]
+     w.mkdir(parents=True, exist_ok=True)
+     return w
+ 
+ 
+ def tag_of(repo, cfg):
+-    return "qwen35" if "qwen3_5" in cfg.model_type else repo.split("/")[-1].lower()
++    return repo.split("/")[-1].lower()
++
++
++def candidate(w, kind):
++    return w / ("bf16.gguf" if kind == "BF16" else f"pure_{kind}.gguf")
+ 
+ 
+ def prepare(args):
+     from transformers import AutoConfig, AutoTokenizer
+     import compiler_arch as A
+-    w = work(args.model)
+-    src = model_dir(args.model)
++    w = work(args.model, args.work_dir)
++    src = model_dir(args.model, args.model_path)
++    cfg = AutoConfig.from_pretrained(src, local_files_only=True)
+     base = w / "bf16.gguf"
+     if not base.exists():
+-        sh(["python", LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", base])
+-    tok = AutoTokenizer.from_pretrained(src)
+-    mix = A.TextMix(tok, tag_of(args.model, AutoConfig.from_pretrained(src)))
++        sh([args.converter_python, LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", base,
++            *(["--no-mtp"] if "qwen3_5" in cfg.model_type else [])])
++    tok = AutoTokenizer.from_pretrained(src, local_files_only=True)
++    mix = A.TextMix(tok, tag_of(args.model, cfg))
+     calib = w / "calib.txt"  # the text mix's calibration split, as text: every source equally (64 windows of 512 tokens)
+-    calib.write_text("\n\n".join(tok.decode(x) for x in mix.calibration(64, 512)))
++    calib.write_text("\n\n".join(tok.decode(x) for x in mix.calibration(args.calib, args.context)))
+     imat = w / "imatrix.gguf"
+     if not imat.exists():
+-        sh([BIN / "llama-imatrix", "-m", base, "-f", calib, "-o", imat, "-c", "512", "--chunks", "64", "-ngl", "999"])
+-    for t in ([] if args.skip_pure else MENU):
+-        f = w / f"pure_{t}.gguf"
++        sh([BIN / "llama-imatrix", "-m", base, "-f", calib, "-o", imat, "-c", args.context, "--chunks", args.calib, "-ngl", "999"])
++    for t in ([] if args.skip_pure else args.menu.split(",")):
++        f = candidate(w, t)
+         if not f.exists():
+             try:  # a type llama.cpp refuses for this model (IQ3_XXS needs importance data for every tensor; Gemma 4's
+                 # KV-shared layers keep key/value tensors no token reaches) is left off the menu
+@@ -94,17 +107,23 @@ def prepare(args):
+                 log(f"  {t}: refused by llama-quantize for this model; not on the menu")
+                 if f.exists():
+                     f.rename(f.with_suffix(".gguf.broken"))  # set aside, not deleted
+-    for t in STOCK:
++    for t in filter(None, args.stock.split(",")):
+         f = w / f"stock_{t}.gguf"
+         if not f.exists():
+             sh([BIN / "llama-quantize", "--imatrix", imat, base, f, t])
+         (w / f"stock_{t}.json").write_text(json.dumps(gguf_tensors(f)))  # each tensor's bytes, for the budgets
+-    from datasets import load_dataset
+-    (w / "wikitext_test.txt").write_text("\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"]))
+-    ev = mix.windows("eval", 8, 512, seed=2)  # the harness's held-out mix windows, sources interleaved so any prefix covers all
+-    (w / "mix_eval.txt").write_text("\n\n".join(tok.decode(ev[s][k]) for k in range(8) for s in mix.sources))
+-    (w / "manifest.json").write_text(json.dumps({"model": args.model, "commit": (LLAMA / "COMMIT").read_text().strip(),
+-                                                  "menu": MENU, "stock": STOCK}, indent=1))
++    if not (w / "wikitext_test.txt").exists():
++        from datasets import load_dataset
++        (w / "wikitext_test.txt").write_text("\n\n".join(load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")["text"]))
++    ev = mix.windows("eval", args.eval_chunks, args.context, seed=2)
++    (w / "mix_eval.txt").write_text("\n\n".join(tok.decode(ev[s][k]) for k in range(args.eval_chunks) for s in mix.sources))
++    from row_allocation import file_sha256
++    (w / "manifest.json").write_text(json.dumps({"model": args.model, "model_path": src,
++        "commit": subprocess.check_output(["git", "-C", str(LLAMA), "rev-parse", "HEAD"], text=True).strip(),
++        "config_sha256": file_sha256(Path(src) / "config.json"), "bf16_sha256": file_sha256(base),
++        "calibration_sha256": file_sha256(calib), "imatrix_sha256": file_sha256(imat),
++        "context": args.context, "calibration_chunks": args.calib,
++        "menu": args.menu.split(","), "stock": list(filter(None, args.stock.split(",")))}, indent=1))
+     log(f"prepared {w}")
+ 
+ 
+@@ -121,6 +140,42 @@ def unpermute(W, n):
+     return W.reshape(n, rows // n // 2, 2, cols).swapaxes(1, 2).reshape(rows, cols)
+ 
+ 
++def qwen35_layout(name, cfg):
++    """Inverse of pinned llama.cpp qwen.py's grouped-to-tiled GDN V-head order."""
++    if "qwen3_5" not in cfg.model_type or ".linear_attn." not in name:
++        return None
++    keys, values = cfg.linear_num_key_heads, cfg.linear_num_value_heads
++    if keys == values:
++        return None
++    axis, prefix, width = 0, 0, cfg.linear_value_head_dim
++    if ".in_proj_qkv." in name or ".conv1d." in name:
++        prefix = 2 * keys * cfg.linear_key_head_dim
++    elif ".in_proj_a." in name or ".in_proj_b." in name:
++        width = 1
++    elif ".out_proj." in name:
++        axis = 1
++    elif ".in_proj_z." not in name:
++        return None
++    return f"v_heads:{axis}:{prefix}:{keys}:{values // keys}:{width}"
++
++
++def restore_layout(X, transform):
++    if transform == "T":
++        return X.T
++    if transform.startswith("unpermute:"):
++        return unpermute(X, int(transform.split(":")[1]))
++    if transform.startswith("v_heads:"):
++        axis, prefix, keys, per_key, width = map(int, transform.split(":")[1:])
++        tail = X.narrow(axis, prefix, X.shape[axis] - prefix)
++        shape = list(tail.shape)
++        expanded = shape[:axis] + [per_key, keys, width] + shape[axis + 1:]
++        tail = tail.reshape(expanded).transpose(axis, axis + 1).reshape(shape)
++        return torch.cat((X.narrow(axis, 0, prefix), tail), dim=axis) if prefix else tail
++    if transform != "id":
++        raise ValueError(f"unknown GGUF layout {transform}")
++    return X
++
++
+ def dequantized(path, names, cfg):
+     """{gguf tensor name: float32 (out, in) tensor} for `names`, in Hugging Face's layout."""
+     import numpy as np
+@@ -144,20 +199,23 @@ def dequantized(path, names, cfg):
+ def measure(args):
+     """Every llama.cpp type, tensor by tensor, swapped alone into the Hugging Face model: KL to the original."""
+     import compiler_arch as A
+-    from transformers import AutoModelForCausalLM, AutoTokenizer
+-    w = work(args.model)
+-    src = model_dir(args.model)
++    from transformers import AutoTokenizer
++    w = work(args.model, args.work_dir)
++    src = model_dir(args.model, args.model_path)
+     tok = AutoTokenizer.from_pretrained(src)
+     dev = "cuda"
+-    dtype = getattr(torch, args.dtype)
+-    model = AutoModelForCausalLM.from_pretrained(src, dtype=dtype).to(dev).eval()
++    torch.backends.cuda.matmul.allow_tf32 = False
++    torch.backends.cudnn.allow_tf32 = False
++    torch.manual_seed(0)
++    from row_allocation import load_original_model, _write_json, file_sha256
++    model = load_original_model(src, dtype=args.dtype, device=dev)
+     for p in model.parameters():
+         p.requires_grad_(False)
+     mix = A.TextMix(tok, tag_of(args.model, model.config))
+     per = max(1, -(-args.windows // len(mix.sources)))
+-    wd = mix.windows("calib", per, 512, seed=1)  # compiler.py measure's held-out windows
++    wd = mix.windows("calib", per, args.context, seed=1)
+     held = A.with_bos(torch.cat([wd[s] for s in mix.sources])[: args.windows], tok, model)
+-    bs = 4
++    bs = args.kl_batch
+     with torch.no_grad():
+         ref_lp = [F.log_softmax(model(held[b : b + bs].to(dev), use_cache=False).logits.float(), -1) for b in range(0, len(held), bs)]
+ 
+@@ -176,8 +234,11 @@ def measure(args):
+     ple = A.per_layer_embedding(model)
+     params = dict(model.named_parameters())
+     if not (w / "bf16.gguf").exists():
+-        sh(["python", LLAMA / "convert_hf_to_gguf.py", src, "--outtype", "bf16", "--outfile", w / "bf16.gguf"])
++        raise ValueError("run prepare before measure")
+     mapping = P.gguf_map(model, w / "bf16.gguf", w / "gguf_map.json")  # gguf tensor → (parameter, layout, scale), by content
++    mapped = json.loads((w / "gguf_map.json").read_text())
++    if mapped["unmatched gguf tensors"] or mapped["parameters without a gguf tensor"]:
++        raise ValueError("incomplete GGUF/HF mapping; refusing a partial sensitivity plan")
+ 
+     def item_of(pname):
+         """The compiler's item for a parameter: a matrix of decoder layer i, the embedding, head or per-layer table, or
+@@ -194,7 +255,11 @@ def measure(args):
+             i, rel = pname[len(pre):].split(".", 1)
+             return f"{i}.{rel[: -len('.weight')]}", "linear", rel[: -len(".weight")], int(i)
+         return f"other.{pname[: -len('.weight')]}", "linear", "other", None
+-    out = {"model": args.model, "method": "gguf", "data": "mix", "held-out windows": [len(held), 512], "kl floor (nothing quantized)": floor,
++    out = {"model": args.model, "method": "gguf", "data": "mix", "dtype": args.dtype,
++           "held-out windows": [len(held), args.context],
++           "held_ids_sha256": hashlib.sha256(held.cpu().numpy().tobytes()).hexdigest(),
++           "source_sha256": {n: file_sha256(Path(__file__).parent / n) for n in ("gguf_compiler.py", "public_eval.py", "compiler.py", "compiler_arch.py")},
++           "kl floor (nothing quantized)": floor,
+            "tied": tied, "embed buckets": [emb.weight.shape[0]], "embed order": "frequency in the text mix", "device": dev,
+            "manifest": json.loads((w / "manifest.json").read_text()), "records": []}
+     recs = out["records"]
+@@ -208,9 +273,9 @@ def measure(args):
+             path.rename(path.with_suffix(".gguf.broken"))  # a half-written file from a refused type: set aside
+             log(f"  {path.name}: unreadable, set aside")
+             return False
+-    for t in [t for t in MENU if (w / f"pure_{t}.gguf").exists() and readable(w / f"pure_{t}.gguf")]:
++    for t in [t for t in args.menu.split(",") if candidate(w, t).exists() and readable(candidate(w, t))]:
+         t0 = time.time()
+-        path = w / f"pure_{t}.gguf"
++        path = candidate(w, t)
+         n_hit = 0
+         for gt in GGUFReader(str(path)).tensors:
+             if gt.name not in mapping:
+@@ -219,7 +284,7 @@ def measure(args):
+             P_ = params[pname]
+             X = torch.from_numpy(dequantize(gt.data, gt.tensor_type).astype(np.float32))
+             X = X.reshape(int(gt.shape[1]), int(gt.shape[0])) if len(gt.shape) >= 2 else X
+-            X = X.T if tr == "T" else unpermute(X, int(tr.split(":")[1])) if tr.startswith("unpermute") else X
++            X = restore_layout(X, tr)
+             orig = P_.data.clone()
+             P_.data.copy_((c * X).reshape(P_.shape).to(P_.dtype))
+             d = kl() - floor
+@@ -233,6 +298,7 @@ def measure(args):
+                 rec |= {"bucket": 0, "rows": P_.shape[0]}
+             recs.append(rec)
+             n_hit += 1
++            _write_json(args.out, out)
+         log(f"{t}: {n_hit} tensors in {time.time() - t0:.0f}s")
+         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+         Path(args.out).write_text(json.dumps(out, indent=1))
+@@ -254,10 +320,11 @@ def gguf_suffix(hf_suffix):
+ def build(args):
+     """A plan (compiler.py allocate over a gguf measurement, --sens) → llama-quantize with a --tensor-type override for
+     every tensor the plan places (the measurement says which GGUF tensor each item is)."""
+-    w = work(args.model)
++    w = work(args.model, args.work_dir)
+     plan = json.loads(Path(args.plan).read_text())
+     sens = json.loads(Path(args.sens).read_text())
+     gname = {r["item"]: r["gguf tensor"] for r in sens["records"]}
++    stored = {(r["item"], r["option"]): r["stored type"] for r in sens["records"]}
+     choice = dict(plan["linears"])
+     for kind in ("embed", "head", "ple"):
+         if plan.get(kind):
+@@ -265,36 +332,56 @@ def build(args):
+     over, want = [], {}
+     for item, t in sorted(choice.items()):
+         if item in gname:
+-            want[gname[item]] = t.upper()
+-            over += ["--tensor-type", f"^{re.escape(gname[item])}$={t.lower()}"]
++            want[gname[item]] = stored[item, t]
++            over += ["--tensor-type", f"^{re.escape(gname[item])}$={stored[item, t].lower()}"]
+     out = w / f"plan_{Path(args.plan).stem}.gguf"
+-    sh([BIN / "llama-quantize", "--imatrix", w / "imatrix.gguf", *over, w / "bf16.gguf", out, args.default])
++    if args.default.upper() in ("F32", "F16", "BF16") and any(t not in ("F32", "F16", "BF16") for t in want.values()):
++        raise ValueError("llama.cpp ignores per-tensor quantized overrides with a floating-point global type; use --default Q4_K")
++    if out.exists():
++        raise ValueError(f"output already exists: {out}")
++    sh([BIN / "llama-quantize", "--pure", "--imatrix", w / "imatrix.gguf", *over, w / "bf16.gguf", out, args.default])
+     from gguf import GGUFReader  # the check: every tensor got the plan's type (llama.cpp falls back where a type cannot apply)
+     got = {t.name: t.tensor_type.name for t in GGUFReader(str(out)).tensors}
+     off = {n: (want[n], got.get(n)) for n in want if got.get(n) != want[n]}
+     log(f"built {out} ({out.stat().st_size / 1e9:.3f} GB): {len(want) - len(off)} of {len(want)} tensors as planned; "
+         f"different: {list(off.items())[:8]}")
++    if off:
++        raise ValueError(f"GGUF stored types differ from plan: {off}")
++    expected_bits = sum(r["bits"] for r in sens["records"] if choice.get(r["item"]) == r["option"])
++    actual_bits = 8 * sum(int(t.n_bytes) for t in GGUFReader(str(out)).tensors if t.name in want)
++    if actual_bits != expected_bits:
++        raise ValueError("GGUF controlled tensor sizes differ from measured plan")
+     return out
+ 
+ 
+ def evaluate(args):
+     """llama-perplexity on WikiText-2 test and the mix: perplexity, and KL to the bf16 GGUF's logits."""
+-    w = work(args.model)
++    w = work(args.model, args.work_dir)
+     res = {}
+-    tmp = Path("/tmp/kld")  # the base logits are large (tokens × vocabulary × 2 bytes): local disk, 64 chunks of 512 per text
++    tmp = w / "kld"
+     tmp.mkdir(exist_ok=True)
+     for text in ("wikitext_test", "mix_eval"):
+         base_kld = tmp / f"base_{text}.kld"
+-        common = ["-c", "512", "--chunks", "64", "-ngl", "999"]
++        common = ["-c", str(args.context), "--chunks", str(args.eval_chunks), "-ngl", "999"]
+         if not base_kld.exists():
+             sh([BIN / "llama-perplexity", "-m", w / "bf16.gguf", "-f", w / f"{text}.txt", *common, "--kl-divergence-base", base_kld])
+         for f in args.files.split(","):
+             g = w / f
+             o = sh([BIN / "llama-perplexity", "-m", g, "-f", w / f"{text}.txt", *common, "--kl-divergence", "--kl-divergence-base", base_kld])
++            (w / f"{g.stem}-{text}-native-ppl.log").write_text(o)
+             ppl = re.search(r"Mean PPL\(Q\)\s*:\s*([\d.]+)", o) or re.search(r"Final estimate: PPL = ([\d.]+)", o)
++            original_ppl = re.search(r"Mean PPL\(base\)\s*:\s*([\d.]+)", o)
+             kld = re.search(r"Mean\s+KLD:\s*([\d.]+)", o)
++            if not (ppl and original_ppl and kld):
++                raise ValueError("native PPL/KL output is incomplete; inspect saved command log")
++            values = [float(hit.group(1)) for hit in (ppl, original_ppl, kld)]
++            if not all(math.isfinite(value) for value in values) or min(values[:2]) <= 0:
++                raise ValueError("native PPL/KL is nonfinite or invalid")
++            from row_allocation import file_sha256
+             res.setdefault(f, {"bytes": g.stat().st_size})[text] = {
+-                "ppl": float(ppl.group(1)) if ppl else None, "kl": float(kld.group(1)) if kld else None}
++                "ppl": values[0], "original_bf16_ppl": values[1], "ppl_ratio": values[0] / values[1],
++                "kl": values[2], "context": args.context, "chunks": args.eval_chunks,
++                "text_sha256": file_sha256(w / f"{text}.txt")}
+             log(f"{f} {text}: ppl {res[f][text]['ppl']}, KL {res[f][text]['kl']}")
+     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+     Path(args.out).write_text(json.dumps(res, indent=1))
+@@ -313,11 +400,22 @@ def inspect(args):
+ 
+ 
+ def main():
++    global LLAMA, BIN
+     ap = argparse.ArgumentParser()
+     sub = ap.add_subparsers(dest="cmd", required=True)
+     for name in ("prepare", "measure", "build", "evaluate", "inspect"):
+         s = sub.add_parser(name)
+         s.add_argument("--model", required=True)
++        s.add_argument("--model-path", default="", help="exact local HF snapshot")
++        s.add_argument("--work-dir", default="")
++        s.add_argument("--llama-dir", default=str(LLAMA))
++        s.add_argument("--converter-python", default=sys.executable, help="isolated GGUF converter Python")
++        s.add_argument("--menu", default=",".join(MENU))
++        s.add_argument("--stock", default=",".join(STOCK), help="comma-separated baselines; empty skips them")
++        s.add_argument("--calib", type=int, default=64)
++        s.add_argument("--context", type=int, default=512)
++        s.add_argument("--eval-chunks", type=int, default=64)
++        s.add_argument("--kl-batch", type=int, default=4)
+         s.add_argument("--dtype", default="float32")
+         s.add_argument("--windows", type=int, default=16)
+         s.add_argument("--plan", default="")
+@@ -327,6 +425,8 @@ def main():
+         s.add_argument("--out", default="")
+         s.add_argument("--skip-pure", action="store_true", help="prepare: only the stock mixes (no type-everywhere files)")
+     args = ap.parse_args()
++    LLAMA = Path(args.llama_dir).resolve()
++    BIN = LLAMA / "build/bin"
+     {"prepare": prepare, "measure": measure, "build": build, "evaluate": evaluate, "inspect": inspect}[args.cmd](args)
+ 
+ 
+diff --git a/current/load_packed.py b/current/load_packed.py
+new file mode 100644
+index 0000000..aca0cd2
+--- /dev/null
++++ b/current/load_packed.py
+@@ -0,0 +1,228 @@
++"""Load opgraph-packed-1 language weights, optionally with original BF16 vision.
++
++This reference loader needs the packed directory and its config/tokenizer assets,
++not the original language checkpoint. It expands weights; it is not a packed inference kernel.
++"""
++
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++# Packed decoding and Hadamard rules: Shin Megami Boson, MIT.
++
++from __future__ import annotations
++
++import argparse
++import math
++from pathlib import Path
++
++import numpy as np
++import torch
++from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, GenerationConfig
++
++from compiler_artifact import decode_rotated, read_artifact
++from opgraph.hadamard import hadamard_factors
++
++
++def _tensor(tensors, manifest, name):
++    value = torch.from_numpy(np.array(tensors[name], copy=True))
++    if manifest["tensors"][name]["dtype"] == "BF16":
++        value = value.view(torch.bfloat16)
++    return value
++
++
++def _decode_matrix(tensors, manifest, matrix, dtype, decode_device, chunk_rows):
++    shape = tuple(matrix["shape"])
++    if len(shape) != 2 or min(shape) < 1:
++        raise ValueError("packed matrix must have a nonempty two-dimensional shape")
++    result = torch.empty(shape, dtype=dtype, device="cpu")
++    if matrix["kind"] == "table":
++        row_ids = []
++        for bucket in matrix["buckets"]:
++            rows = torch.from_numpy(np.array(tensors[bucket["rows"]], dtype=np.int64, copy=True))
++            row_ids.append(rows)
++            value = (_decode_matrix(tensors, manifest, bucket["matrix"], dtype, decode_device, chunk_rows)
++                     if "matrix" in bucket else _tensor(tensors, manifest, bucket["dense"]))
++            if rows.ndim != 1 or value.shape != (len(rows), shape[1]):
++                raise ValueError("packed table bucket shape mismatch")
++            result[rows] = value.to(dtype)
++        if not row_ids or not torch.equal(torch.cat(row_ids).sort().values, torch.arange(shape[0])):
++            raise ValueError("packed table buckets must cover every row exactly once")
++        return result
++    if matrix["kind"] != "grouped":
++        raise ValueError(f"unsupported packed matrix kind: {matrix['kind']}")
++    groups = matrix["groups"]
++    row_ids = [np.asarray(tensors[group["key"] + ".rows"], dtype=np.int64) for group in groups]
++    if (not row_ids or any(rows.ndim != 1 for rows in row_ids)
++            or not np.array_equal(np.sort(np.concatenate(row_ids)), np.arange(shape[0]))
++            or any(group["columns"] != shape[1] for group in groups)):
++        raise ValueError("packed groups must cover every matrix row at the recorded width")
++    signs = torch.from_numpy(np.array(tensors[matrix["signs"]], copy=True)).to(decode_device, torch.float64)
++    if signs.shape != (shape[1],) or not bool(((signs == -1) | (signs == 1)).all()):
++        raise ValueError("invalid packed input rotation signs")
++    rotated = decode_rotated(tensors, matrix)
++    A, B = (factor.to(decode_device) for factor in hadamard_factors(shape[1]))
++    # D @ (A ⊗ B) = vec(A.T @ reshape(D) @ B), then the recorded input signs.
++    # Reuse the quantizer's exact factors without allocating a full n-by-n rotation.
++    for start in range(0, shape[0], chunk_rows):
++        stop = min(start + chunk_rows, shape[0])
++        block = torch.from_numpy(rotated[start:stop]).to(decode_device, torch.float64)
++        block = (A.T @ block.reshape(-1, len(A), len(B))) @ B
++        block = block.reshape(stop - start, shape[1]) / math.sqrt(shape[1]) * signs
++        result[start:stop].copy_(block.to(device="cpu", dtype=dtype))
++    return result
++
++
++def _load_vision(model, vision_file):
++    """Restore the complete original visual encoder and merger, without recasting RoPE buffers."""
++    from safetensors import safe_open
++
++    visual = model.model.visual
++    parameters = dict(visual.named_parameters())
++    expected = {"model.visual." + name: value for name, value in visual.state_dict().items()}
++    with safe_open(str(vision_file), framework="pt", device="cpu") as source:
++        if set(source.keys()) != set(expected):
++            missing = sorted(set(expected) - set(source.keys()))
++            extra = sorted(set(source.keys()) - set(expected))
++            raise ValueError(f"vision state coverage mismatch; missing={missing}, extra={extra}")
++        for name, target in expected.items():
++            value = source.get_tensor(name)
++            if value.shape != target.shape or value.dtype != torch.bfloat16:
++                raise ValueError(f"vision weights must retain their original BF16 shape/dtype: {name}")
++            if not bool(torch.isfinite(value).all()):
++                raise ValueError(f"nonfinite original vision weight: {name}")
++            short = name.removeprefix("model.visual.")
++            if short not in parameters:
++                raise ValueError(f"unexpected persistent vision buffer: {name}")
++            parameters[short].data = value.to(device=target.device)
++    # Only parameters above change dtype. Original FP32 nonpersistent rotary buffers stay intact.
++    visual.config.dtype = torch.bfloat16
++    model.config.vision_config.dtype = torch.bfloat16
++
++
++@torch.no_grad()
++def load_packed(path, *, dtype="float32", device="cpu", decode_device="cpu", chunk_rows=256, vision_file=None):
++    """Restore language weights and optional original BF16 vision, without base language weights.
++
++    dtype must match the build for a dense.pt parity comparison. The model is
++    normally initialized on its requested device, with real nonpersistent rotary
++    buffers. Only the current matrix's decoding uses decode_device, and no full
++    CPU model remains beside decoded matrices when device is CUDA. Pass
++    vision_file with full model.visual.* keys to construct the full Qwen3.5 wrapper.
++    Language checksums and all state coverage, shapes and finite values are checked.
++    """
++    path = Path(path)
++    if isinstance(dtype, str):
++        dtype = {"float32": torch.float32, "bfloat16": torch.bfloat16}[dtype]
++    if dtype not in (torch.float32, torch.bfloat16) or chunk_rows < 1:
++        raise ValueError("use float32/bfloat16 and positive chunk_rows")
++    decode_device = torch.device(decode_device)
++    if decode_device.type not in ("cpu", "cuda"):
++        raise ValueError("FP64 decoding requires a CPU or CUDA device")
++    config = AutoConfig.from_pretrained(path, local_files_only=True)
++    model_class = AutoModelForCausalLM
++    if vision_file is not None:
++        from transformers import AutoModelForImageTextToText
++
++        if config.model_type != "qwen3_5":
++            raise ValueError("original vision loading currently requires the full qwen3_5 config")
++        model_class = AutoModelForImageTextToText
++    with torch.device(device):
++        model = model_class.from_config(config, dtype=dtype).eval()
++    if (path / "generation_config.json").exists():
++        model.generation_config = GenerationConfig.from_pretrained(path, local_files_only=True)
++    model.requires_grad_(False).to(device)
++    # Construct real rotary buffers before reading the packed byte arrays.
++    tensors, manifest = read_artifact(path)
++    if not manifest.get("self_contained_weights"):
++        raise ValueError("artifact does not declare a complete model state")
++    if vision_file is not None:
++        _load_vision(model, vision_file)
++    state, names = {}, {}
++    for name, value in model.state_dict().items():
++        if vision_file is not None and name.startswith("model.visual."):
++            continue
++        key = name.replace("model.language_model.", "model.", 1) if vision_file is not None else name
++        state[key], names[key] = value, name
++    matrices, dense, aliases = manifest["matrices"], set(manifest["dense"]), manifest.get("aliases", {})
++    if (set(matrices) & dense or (set(matrices) | dense) & set(aliases)
++            or set(state) != set(matrices) | dense | set(aliases)):
++        missing = sorted(set(state) - (set(matrices) | dense | set(aliases)))
++        extra = sorted((set(matrices) | dense | set(aliases)) - set(state))
++        raise ValueError(f"packed state coverage mismatch; missing={missing}, extra={extra}")
++    for name, target in state.items():
++        if name in aliases:
++            continue
++        value = (_decode_matrix(tensors, manifest, matrices[name], target.dtype, decode_device, chunk_rows)
++                 if name in matrices else _tensor(tensors, manifest, name))
++        if value.shape != target.shape:
++            raise ValueError(f"packed state shape mismatch: {name}")
++        value = value.to(target.dtype)
++        flat = value.reshape(-1)
++        if any(not bool(torch.isfinite(flat[start:start + (1 << 22)]).all())
++               for start in range(0, flat.numel(), 1 << 22)):
++            raise ValueError(f"nonfinite restored weight: {name}")
++        target.copy_(value)
++        print(f"Restored {name} {tuple(target.shape)}", flush=True)
++        del value, flat
++    for name, owner in aliases.items():
++        if owner not in matrices and owner not in dense:
++            raise ValueError(f"packed alias needs a non-alias owner: {name}")
++        if state[name].shape != state[owner].shape or state[name].dtype != state[owner].dtype:
++            raise ValueError(f"packed alias shape/dtype mismatch: {name}")
++        module_name, leaf = names[name].rsplit(".", 1)
++        module = model.get_submodule(module_name)
++        try:
++            parameter = model.get_parameter(names[owner])
++        except AttributeError:
++            module.register_buffer(leaf, model.get_buffer(names[owner]))
++        else:
++            module.register_parameter(leaf, parameter)
++    del state, tensors
++    return model.eval()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("path", help="directory containing artifact.json, weights.bin and model assets")
++    parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
++    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
++    parser.add_argument("--decode-device", default="cpu")
++    parser.add_argument("--chunk-rows", type=int, default=256)
++    parser.add_argument("--vision-file", type=Path, help="original BF16 vision.safetensors, with model.visual.* keys")
++    parser.add_argument("--processor-dir", type=Path, help="full original processor assets; defaults to vision file's directory")
++    parser.add_argument("--image", type=Path, help="local image for each prompt; requires --vision-file")
++    parser.add_argument("--prompt", action="append", required=True, help="repeat for multiple prompts")
++    parser.add_argument("--max-new-tokens", type=int, default=64)
++    args = parser.parse_args()
++    if args.image is not None and args.vision_file is None:
++        parser.error("--image requires --vision-file")
++    model = load_packed(args.path, dtype=args.dtype, device=args.device,
++                        decode_device=args.decode_device, chunk_rows=args.chunk_rows, vision_file=args.vision_file)
++    processor = None
++    if args.vision_file is not None:
++        from transformers import AutoProcessor
++
++        processor = AutoProcessor.from_pretrained(args.processor_dir or args.vision_file.parent, local_files_only=True)
++        tokenizer = processor.tokenizer
++    else:
++        tokenizer = AutoTokenizer.from_pretrained(args.path, local_files_only=True)
++    for prompt in args.prompt:
++        if processor is not None:
++            content = ([{"type": "image", "image": str(args.image.resolve())}] if args.image is not None else [])
++            content.append({"type": "text", "text": prompt})
++            inputs = processor.apply_chat_template([{"role": "user", "content": content}],
++                                                   add_generation_prompt=True, enable_thinking=False,
++                                                   tokenize=True, return_dict=True, return_tensors="pt").to(args.device)
++            if args.image is not None and "mm_token_type_ids" not in inputs:
++                raise ValueError("Qwen3.5 multimodal inputs require processor mm_token_type_ids")
++        else:
++            text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True,
++                                                 enable_thinking=False, tokenize=False)
++            inputs = tokenizer(text, return_tensors="pt").to(args.device)
++        with torch.inference_mode():
++            output = model.generate(**inputs, do_sample=False, max_new_tokens=args.max_new_tokens,
++                                    pad_token_id=(tokenizer.eos_token_id if tokenizer.pad_token_id is None
++                                                  else tokenizer.pad_token_id))
++        print(tokenizer.decode(output[0, inputs.input_ids.shape[1]:], skip_special_tokens=True), flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/base/math_calibration.py b/current/math_calibration.py
+index 0f6a676..2614043 100644
+--- a/base/math_calibration.py
++++ b/current/math_calibration.py
+@@ -6,6 +6,8 @@ problems, thinking off, up to --max-new tokens each, cut into windows of --len t
+ --math-sources is a Hugging Face cache that holds EleutherAI/hendrycks_math.
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import argparse
+@@ -71,13 +73,14 @@ def main():
+     ap.add_argument("--max-new", type=int, default=2048)
+     ap.add_argument("--len", type=int, default=2048)
+     ap.add_argument("--batch", type=int, default=64)
++    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
+     ap.add_argument("--out", required=True)
+     args = ap.parse_args()
+     t0 = time.time()
+     tok = AutoTokenizer.from_pretrained(args.model_path, padding_side="left")
+     if tok.pad_token_id is None:
+         tok.pad_token = tok.eos_token
+-    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
++    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
+     prompts = math_prompts(tok, args.math_sources)[args.skip : args.skip + args.problems]
+     w = solved(model, tok, prompts, args.len, batch=args.batch, max_new=args.max_new, note="long solutions")
+     w = w[torch.randperm(len(w), generator=torch.Generator().manual_seed(0))]
+diff --git a/base/math_eval.py b/current/math_eval.py
+index d23e9ed..76217f2 100644
+--- a/base/math_eval.py
++++ b/current/math_eval.py
+@@ -11,6 +11,8 @@
+     python math_eval.py --models orig,dense:build/dense.pt --no-thinking --out results/math.json     (run_batch.py: lm2Math)
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import argparse
+@@ -247,6 +249,8 @@ def main():
+     ap.add_argument("--per-cell", type=int, default=15)
+     ap.add_argument("--max-new", type=int, default=2048)
+     ap.add_argument("--batch", type=int, default=32)
++    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
++    ap.add_argument("--cache-tag", default="qwen35", help="token cache namespace; use a separate tag for a different tokenizer")
+     ap.add_argument("--no-thinking", action="store_true", help="the chat template's empty thinking block: the model reasons in its answer")
+     ap.add_argument("--ids-file", default="", help="a JSON list of problem ids: only these")
+     ap.add_argument("--problems-file", default="", help="a JSON file whose \"problems\" are math_bench problems to use instead of generating them (e.g. a fresh frozen set)")
+@@ -267,17 +271,17 @@ def main():
+     if args.ids_file:
+         keep = set(json.loads(Path(args.ids_file).read_text()))
+         problems = [p for p in problems if p["id"] in keep]
+-    ids = token_ids(tok, "validation")
++    ids = token_ids(tok, "validation", args.cache_tag)
+     wins = ids[: len(ids) // 512 * 512].reshape(-1, 512)
+     wins = wins[torch.randperm(len(wins), generator=torch.Generator().manual_seed(0))[:16]]
+-    res = {"device": DEV, "problems": len(problems), "max new tokens": args.max_new, "greedy": args.temperature == 0, "thinking": not args.no_thinking, "models": {}}
++    res = {"device": DEV, "dtype": args.dtype, "problems": len(problems), "max new tokens": args.max_new, "greedy": args.temperature == 0, "thinking": not args.no_thinking, "models": {}}
+     out = Path(args.out)
+     out.parent.mkdir(parents=True, exist_ok=True)
+     ref_lp = None
+     all_rows = {}
+     for spec in args.models.split(","):
+         kind, _, what = spec.partition(":")
+-        model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
++        model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
+         for p in model.parameters():
+             p.requires_grad_(False)
+         if ref_lp is None:
+diff --git a/current/math_gguf.py b/current/math_gguf.py
+new file mode 100644
+index 0000000..b294dd9
+--- /dev/null
++++ b/current/math_gguf.py
+@@ -0,0 +1,218 @@
++"""Independent native llama.cpp math216, using the existing protocol and scorer.
++
++Original BF16 GGUF and adaptive GGUF run separately with identical arguments.
++HF-rendered prompt token IDs bypass chat-template differences. Complete cohorts
++are saved atomically; native continuous batching and F16 KV are explicit.
++"""
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++# Reuses Shin Megami Boson's math_bench exact-answer scorer (MIT).
++from __future__ import annotations
++
++import argparse
++import base64
++from collections import Counter
++from concurrent.futures import ThreadPoolExecutor
++import fcntl
++import json
++import os
++from pathlib import Path
++import re
++import socket
++import subprocess
++import time
++import urllib.request
++
++import math_bench as B
++from compare_math_caps import digest
++from row_allocation import _write_json, file_sha256
++
++SOURCE = Path(__file__).resolve().parent
++
++
++def request(port, path, body=None):
++    data = None if body is None else json.dumps(body).encode()
++    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data,
++                                 {"Content-Type": "application/json"})
++    with urllib.request.urlopen(req, timeout=1800) as response:
++        return json.load(response)
++
++
++def totals(rows):
++    return {"right": sum(r["correct"] for r in rows.values()), "of": len(rows),
++            "hit_token_limit": sum(not r["finished"] for r in rows.values()),
++            "mean_tokens": sum(r["tokens"] for r in rows.values()) / len(rows) if rows else 0}
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--kind", choices=("original", "adaptive"), required=True)
++    parser.add_argument("--model-id", required=True)
++    parser.add_argument("--snapshot", type=Path, required=True)
++    parser.add_argument("--gguf", type=Path, required=True)
++    parser.add_argument("--mmproj", type=Path, required=True)
++    parser.add_argument("--llama-dir", type=Path, required=True)
++    parser.add_argument("--images", type=Path, required=True, help="directory containing the published red/blue examples")
++    parser.add_argument("--out", type=Path, required=True)
++    parser.add_argument("--max-new", type=int, default=4096)
++    parser.add_argument("--parallel", type=int, default=4)
++    parser.add_argument("--context-per-slot", type=int, default=8192)
++    parser.add_argument("--port", type=int, default=18081)
++    args = parser.parse_args()
++    if args.max_new != 4096 or args.parallel != 4 or args.context_per_slot != 8192:
++        parser.error("current native profile is cap4096/parallel4/context8192 per slot")
++    args.out.parent.mkdir(parents=True, exist_ok=True)
++    lock = args.out.with_suffix(".lock").open("a+")
++    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++    from transformers import AutoTokenizer, __version__ as transformers_version
++    from gguf import GGUFReader
++    tokenizer = AutoTokenizer.from_pretrained(args.snapshot, local_files_only=True)
++    protocol = SOURCE / "results/protocols/math216.json"
++    problems = json.loads(protocol.read_text())["problems"]
++    by_id = {p["id"]: p for p in problems}
++    if len(problems) != 216 or len(by_id) != 216:
++        raise ValueError("expected frozen216 protocol")
++    prompts = {p["id"]: tokenizer.apply_chat_template(
++        [{"role": "user", "content": f"{p['question']}\n\n{B.INSTRUCTION}"}],
++        tokenize=False, add_generation_prompt=True, enable_thinking=False) for p in problems}
++    ordered = sorted(by_id, key=lambda key: (len(prompts[key]), key))
++    prompt_ids = {key: tokenizer.encode(prompts[key], add_special_tokens=False) for key in ordered}
++    if max(map(len, prompt_ids.values())) + args.max_new >= args.context_per_slot:
++        raise ValueError("prompt plus generation exceeds a native slot")
++    binary = args.llama_dir / "build/bin/llama-server"
++    engine_commit = subprocess.check_output(["git", "-C", str(args.llama_dir), "rev-parse", "HEAD"], text=True).strip()
++    reader = GGUFReader(str(args.gguf))
++    stored_types = dict(Counter(t.tensor_type.name for t in reader.tensors))
++    del reader
++    fingerprint = {"model_id": args.model_id, "kind": args.kind,
++        "protocol_sha256": file_sha256(protocol), "gguf_sha256": file_sha256(args.gguf),
++        "mmproj_sha256": file_sha256(args.mmproj), "engine_commit": engine_commit,
++        "server_sha256": file_sha256(binary), "driver_sha256": file_sha256(Path(__file__)),
++        "gguf_tensor_types": stored_types,
++        "gpu_and_driver": subprocess.check_output(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"], text=True).strip(),
++        "scorer_sha256": file_sha256(SOURCE / "math_bench.py"), "prompt_ids_sha256": digest(prompt_ids),
++        "text_assets": {name: file_sha256(args.snapshot / name) for name in
++                        ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")},
++        "transformers": transformers_version, "max_new_tokens": args.max_new,
++        "parallel": args.parallel, "context_per_slot": args.context_per_slot, "kv_types": "F16/F16",
++        "seed": 0, "samplers": ["temperature"], "temperature": 0, "cache_prompt": False,
++        "thinking": False, "ordered_ids": ordered,
++        "images": {name: file_sha256(args.images / name) for name in
++                   ("vision-red-square.png", "vision-blue-circle.png")}}
++    report = {"schema": 1, "state": "running", "fingerprint": fingerprint,
++              "fingerprint_sha256": digest(fingerprint), "rows": {}, "image_checks": [],
++              "scope": "Native llama.cpp quality, fresh original BF16/adaptive GGUF. Different backend from Torch LAMQ reports; no scores or speed claims inherited."}
++    if args.out.exists():
++        report = json.loads(args.out.read_text())
++        if report["fingerprint"] != fingerprint or report["fingerprint_sha256"] != digest(fingerprint):
++            raise ValueError("resume fingerprint differs")
++        rows = report["rows"]
++        if len(rows) % args.parallel or set(rows) != set(ordered[:len(rows)]):
++            raise ValueError("resume is not a complete-cohort prefix")
++        for key, row in rows.items():
++            raw = row["generated_token_ids"]
++            eos = {tokenizer.eos_token_id, tokenizer.pad_token_id} - {None}
++            n = min(next((i for i, token in enumerate(raw) if token in eos), len(raw)), args.max_new)
++            if (row["question"] != by_id[key]["question"] or row["expected_answer"] != by_id[key]["answer"]
++                    or row["tokens"] != n or row["text"] != tokenizer.decode(raw[:n], skip_special_tokens=False)
++                    or row["stop_type"] not in ("eos", "limit")
++                    or row["finished"] != (n < args.max_new and row["stop_type"] == "eos")):
++                raise ValueError("saved native row differs from recorded generation")
++            score = B.score(by_id[key], row["text"]) if row["finished"] else (False, None)
++            if (row["correct"], row["answer"]) != score:
++                raise ValueError("saved score differs")
++        if report["state"] == "completed":
++            print(json.dumps(report["summary"])); return
++    with socket.socket() as probe:
++        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        probe.bind(("127.0.0.1", args.port))
++    command = [str(binary), "-m", str(args.gguf), "--mmproj", str(args.mmproj),
++        "--host", "127.0.0.1", "--port", str(args.port), "--alias", "w-modelforge",
++        "--ctx-size", str(args.context_per_slot * args.parallel), "--parallel", str(args.parallel),
++        "--n-gpu-layers", "99", "--cache-type-k", "f16", "--cache-type-v", "f16",
++        "--jinja", "--reasoning", "off", "--no-warmup", "--no-context-shift", "--seed", "0"]
++    report["command"] = command
++    args.out.parent.mkdir(parents=True, exist_ok=True)
++    environment = dict(os.environ)
++    environment.pop("HF_TOKEN", None)
++    environment["NVIDIA_TF32_OVERRIDE"] = "0"
++    process = None
++    started = time.monotonic()
++    try:
++        with args.out.with_suffix(".server.log").open("ab") as log:
++            process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
++                                       stdout=log, stderr=subprocess.STDOUT)
++        deadline = time.monotonic() + 300
++        while True:
++            if process.poll() is not None:
++                raise RuntimeError("native server exited during startup")
++            try:
++                request(args.port, "/health"); break
++            except Exception:
++                if time.monotonic() >= deadline:
++                    raise RuntimeError("native server health timeout")
++                time.sleep(1)
++        # Verify the GGUF tokenizer's special-token parsing against all HF prompts.
++        for key in ordered:
++            got = request(args.port, "/tokenize", {"content": prompts[key], "add_special": False, "parse_special": True})["tokens"]
++            if got != prompt_ids[key]:
++                raise ValueError(f"native/HF prompt token IDs differ: {key}")
++        report["all216_native_tokenizations_match"] = True
++        if not report["image_checks"]:
++            for name, expected in (("vision-red-square.png", "red"), ("vision-blue-circle.png", "blue")):
++                image = base64.b64encode((args.images / name).read_bytes()).decode()
++                result = request(args.port, "/v1/chat/completions", {"model": "w-modelforge",
++                    "messages": [{"role": "user", "content": [
++                        {"type": "text", "text": "Name the color of the large shape. Answer with one lowercase color word."},
++                        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + image}}]}],
++                    "temperature": 0, "seed": 0, "max_tokens": 32,
++                    "chat_template_kwargs": {"enable_thinking": False}})
++                answer = result["choices"][0]["message"]["content"]
++                passed = re.fullmatch(expected + r"[.!]?", answer.strip().lower()) is not None
++                report["image_checks"].append({"image": name, "expected": expected, "answer": answer, "passed": passed})
++            _write_json(args.out, report)
++        if not all(row["passed"] for row in report["image_checks"]):
++            raise RuntimeError("basic native image response did not match")
++
++        def solve(slot_key):
++            slot, key = slot_key
++            result = request(args.port, "/completion", {"prompt": prompt_ids[key],
++                "n_predict": args.max_new, "return_tokens": True, "stream": False,
++                "samplers": ["temperature"], "temperature": 0, "seed": 0,
++                "cache_prompt": False, "id_slot": slot})
++            if result["stop_type"] not in ("eos", "limit") or result.get("truncated"):
++                raise RuntimeError(f"unexpected native stopping/context behavior: {key}")
++            raw = result["tokens"]
++            if not isinstance(raw, list) or any(type(token) is not int for token in raw):
++                raise RuntimeError("native response has no generated token IDs")
++            eos = {tokenizer.eos_token_id, tokenizer.pad_token_id} - {None}
++            n = next((i for i, token in enumerate(raw) if token in eos), len(raw))
++            n = min(n, args.max_new)
++            text = tokenizer.decode(raw[:n], skip_special_tokens=False)
++            finished = n < args.max_new and result["stop_type"] == "eos"
++            correct, answer = B.score(by_id[key], text) if finished else (False, None)
++            return key, {"question": by_id[key]["question"], "expected_answer": by_id[key]["answer"],
++                "correct": correct, "answer": answer, "tokens": n, "finished": finished,
++                "text": text, "generated_token_ids": raw, "api_content": result["content"],
++                "stop_type": result["stop_type"], "native_timings": result.get("timings")}
++
++        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
++            for start in range(len(report["rows"]), len(ordered), args.parallel):
++                batch = ordered[start:start + args.parallel]
++                report["rows"].update(pool.map(solve, enumerate(batch)))
++                report["summary"] = totals(report["rows"])
++                report["elapsed_seconds_this_process"] = time.monotonic() - started
++                _write_json(args.out, report)
++                print(json.dumps(report["summary"]), flush=True)
++        report["state"] = "completed"
++        _write_json(args.out, report)
++    finally:
++        if process is not None and process.poll() is None:
++            process.terminate()
++            try:
++                process.wait(timeout=30)
++            except subprocess.TimeoutExpired:
++                process.kill(); process.wait()
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/base/opgraph/codes.py b/current/opgraph/codes.py
+index de3f82b..04641b8 100644
+--- a/base/opgraph/codes.py
++++ b/current/opgraph/codes.py
+@@ -28,6 +28,8 @@ Words
+                              step multiplier of each matrix set so its entropy hits a target rate
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import math
+@@ -36,6 +38,7 @@ from pathlib import Path
+ import torch
+ 
+ from .frame import REAL, Domain, Environment, Net, _real, gauge, insert_identity, matrix_net, split_index, split_scale
++from .hadamard import hadamard, hadamard_factors, rht
+ from .syntax import sweep
+ from .verbs import FP4_E2M1, FP8_E4M3, SET, _vectors, kmeans, nearest, restrict_codebook, restrict_set, snap, split_codebook
+ 
+@@ -80,58 +83,6 @@ def nv_block_scales(X: torch.Tensor) -> torch.Tensor:
+ # ----------------------------------------------------------------------------- rules: Hadamard transforms and Gaussian codes
+ 
+ 
+-def _is_prime(q: int) -> bool:
+-    return q > 1 and all(q % d for d in range(2, math.isqrt(q) + 1))
+-
+-
+-def _paley(q: int) -> torch.Tensor:
+-    """Paley's first construction: a ±1 Hadamard matrix of order q + 1, for a prime q ≡ 3 (mod 4)."""
+-    squares = {(x * x) % q for x in range(1, q)}
+-    chi = torch.tensor([0.0] + [1.0 if a in squares else -1.0 for a in range(1, q)], dtype=torch.float64)
+-    Q = chi[(torch.arange(q)[None, :] - torch.arange(q)[:, None]) % q]
+-    S = torch.zeros(q + 1, q + 1, dtype=torch.float64)
+-    S[0, 1:], S[1:, 0], S[1:, 1:] = 1, -1, Q
+-    return S + torch.eye(q + 1, dtype=torch.float64)
+-
+-
+-def hadamard(n: int) -> torch.Tensor:
+-    """An orthogonal Hadamard matrix of order n = 2^a·p with p = 1, 2 or q + 1 for a prime q ≡ 3 (mod 4):
+-    Sylvester's construction for the power of two, Kronecker with Paley's for the rest (960 = 16·60, 2560 = 128·20)."""
+-    A, B = hadamard_factors(n)
+-    return torch.kron(A, B) / math.sqrt(n)
+-
+-
+-def hadamard_factors(n: int) -> tuple[torch.Tensor, torch.Tensor]:
+-    """A and B with hadamard(n) = (A ⊗ B) / √n, as small as the construction allows: Sylvester's matrix of order 2^a is itself
+-    the product of those of orders 2^(a//2) and 2^(a − a//2), so a pure power of two splits in the middle."""
+-    for a in range(int(math.log2(n)), -1, -1):
+-        if n % 2**a:
+-            continue
+-        p = n // 2**a
+-        if p in (1, 2) or (_is_prime(p - 1) and (p - 1) % 4 == 3):
+-            H = torch.ones(1, 1, dtype=torch.float64)
+-            while H.shape[0] < 2**a:
+-                H = torch.cat([torch.cat([H, H], 1), torch.cat([H, -H], 1)], 0)
+-            P = torch.tensor([[1.0, 1.0], [1.0, -1.0]], dtype=torch.float64) if p == 2 else torch.ones(1, 1, dtype=torch.float64) if p == 1 else _paley(p - 1)
+-            if p == 1 and a > 1:
+-                return _sylvester(a // 2), _sylvester(a - a // 2)
+-            return H, P
+-    raise ValueError(f"no Hadamard construction here for order {n}")
+-
+-
+-def _sylvester(a: int) -> torch.Tensor:
+-    H = torch.ones(1, 1, dtype=torch.float64)
+-    while H.shape[0] < 2**a:
+-        H = torch.cat([torch.cat([H, H], 1), torch.cat([H, -H], 1)], 0)
+-    return H
+-
+-
+-def rht(n: int, seed: int) -> torch.Tensor:
+-    """A randomized Hadamard transform H·diag(s), random signs s: orthogonal, and it spreads any weight across all n inputs."""
+-    s = torch.where(torch.rand(n, generator=torch.Generator().manual_seed(seed), dtype=torch.float64) < 0.5, -1.0, 1.0)
+-    return hadamard(n) * s[None, :]
+-
+-
+ def gaussian_codebook(K: int, d: int, seed: int = 0) -> torch.Tensor:
+     """k-means on unit-Gaussian samples. After incoherence processing a weight matrix is close to i.i.d. Gaussian, so this
+     one codebook serves every matrix; it is a fixed part of the format, like a lattice, and is not stored per model."""
+@@ -233,11 +184,19 @@ def restrict_trellis(net: Net, core: str, label: str, domain: Domain, given: tor
+         Q = v[viterbi(X, v, domain.state_bits, int(domain.bits))]
+     else:
+         Q = given.to(X.dtype).reshape(X.shape)
++        # Keep CPU sorting (including duplicate-level order), but move the independent
++        # lookups and exact path checks with the sweep. Whole rows retain every transition.
+         order = torch.argsort(v)
+-        pos = torch.searchsorted(v[order], Q.contiguous()).clamp(max=len(v) - 1)
+-        states = order[pos]
+-        if not (torch.equal(v[states], Q) and is_trellis_path(states, domain.state_bits, int(domain.bits))):
+-            raise ValueError("the given projection is not a path through this trellis")
++        dev = DEVICE if GPU_SWEEP and DEVICE == "cuda" else "cpu"
++        levels, sorted_levels, indices = v.to(dev), v[order].to(dev), order.to(dev)
++        rows = max(1, (1 << 22) // max(1, Q.shape[1]))
++        for start in range(0, len(Q), rows):
++            values = Q[start:start + rows].to(dev).contiguous()
++            pos = torch.searchsorted(sorted_levels, values).clamp(max=len(v) - 1)
++            states = indices[pos]
++            if not (torch.equal(levels[states], values)
++                    and is_trellis_path(states, domain.state_bits, int(domain.bits))):
++                raise ValueError("the given projection is not a path through this trellis")
+     c.data = torch.movedim(Q.reshape(shape), -1, ax)
+     c.domain = Domain(domain.kind, domain.bits, levels=domain.levels, axis=label, state_bits=domain.state_bits, fixed_start=domain.fixed_start)
+     return n
+@@ -411,7 +370,7 @@ class RowTrellisCode:
+ 
+ 
+ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list[int], incoherent: bool = True,
+-               in_seed: int | None = None, out_rot: bool = True) -> list[Net]:
++               in_seed: int | None = None, out_rot: bool = True, input_cache: dict | None = None) -> list[Net]:
+     """(Gauge: incoherence →) Split(scale, per row, by RMS) → (block LDLQ sweep →) the code's Restrict and Split, for
+     matrices that read the same input. They share one input transform (computed once at runtime), keep their own output
+     transforms, and are swept together as one taller matrix: rows do not interact under Refit, so this is the same as
+@@ -422,7 +381,16 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
+     Ws = [W.to(dev).double() for W in Ws]
+     n = Ws[0].shape[1]
+     rows, cols = ("u" if out_rot else "o", "v") if incoherent else ("o", "i")
+-    R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
++    cache_key = cached = None
++    if input_cache is not None:
++        if H is None or in_seed is None or not incoherent or out_rot:
++            raise ValueError("input cache requires an explicit input-only rotation and an unchanged H")
++        cache_key = (id(H), H._version, n, int(in_seed), str(dev))
++        cached = input_cache.get(cache_key)
++    if cached is not None:
++        R_in = cached[0]
++    else:
++        R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
+     nets = []
+     for W, s in zip(Ws, seeds):
+         net = matrix_net(W)
+@@ -436,7 +404,13 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
+     S = X.pow(2).mean(1).sqrt().clamp(min=1e-12)
+     settled = None
+     if H is not None:
+-        H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
++        if cached is None:
++            H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
++            env = Environment(H)
++            if input_cache is not None:
++                input_cache[cache_key] = (R_in, env)
++        else:
++            env = cached[1]  # sweep reads dead/U and only mutates its own T; H/U stay unchanged.
+         settled = torch.empty_like(X)  # the sweep's projection, in units of the row scale
+ 
+         def project(j, x, T):
+@@ -449,7 +423,7 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
+             q = q * S[:, None]
+             return q[:, 0] if code.width == 1 else q
+ 
+-        X = sweep(X, Environment(H), project, width=code.width)
++        X = sweep(X, env, project, width=code.width)
+         settled = settled.cpu()
+     X, S = X.cpu(), S.cpu()
+     out, r0 = [], 0
+diff --git a/current/opgraph/hadamard.py b/current/opgraph/hadamard.py
+new file mode 100644
+index 0000000..418e711
+--- /dev/null
++++ b/current/opgraph/hadamard.py
+@@ -0,0 +1,64 @@
++"""The upstream Hadamard/RHT rules, independent of model checkpoint configuration.
++
++Moved unchanged from opgraph.codes so the quantizer and packed loader share them.
++"""
++
++# Original rules: Shin Megami Boson, MIT; W-World-Labs relocation (2026-11-12).
++
++from __future__ import annotations
++
++import math
++
++import torch
++
++
++def _is_prime(q: int) -> bool:
++    return q > 1 and all(q % d for d in range(2, math.isqrt(q) + 1))
++
++
++def _paley(q: int) -> torch.Tensor:
++    """Paley's first construction: a ±1 Hadamard matrix of order q + 1, for a prime q ≡ 3 (mod 4)."""
++    squares = {(x * x) % q for x in range(1, q)}
++    chi = torch.tensor([0.0] + [1.0 if a in squares else -1.0 for a in range(1, q)], dtype=torch.float64)
++    Q = chi[(torch.arange(q)[None, :] - torch.arange(q)[:, None]) % q]
++    S = torch.zeros(q + 1, q + 1, dtype=torch.float64)
++    S[0, 1:], S[1:, 0], S[1:, 1:] = 1, -1, Q
++    return S + torch.eye(q + 1, dtype=torch.float64)
++
++
++def hadamard(n: int) -> torch.Tensor:
++    """An orthogonal Hadamard matrix of order n = 2^a·p with p = 1, 2 or q + 1 for a prime q ≡ 3 (mod 4):
++    Sylvester's construction for the power of two, Kronecker with Paley's for the rest (960 = 16·60, 2560 = 128·20)."""
++    A, B = hadamard_factors(n)
++    return torch.kron(A, B) / math.sqrt(n)
++
++
++def hadamard_factors(n: int) -> tuple[torch.Tensor, torch.Tensor]:
++    """A and B with hadamard(n) = (A ⊗ B) / √n, as small as the construction allows: Sylvester's matrix of order 2^a is itself
++    the product of those of orders 2^(a//2) and 2^(a − a//2), so a pure power of two splits in the middle."""
++    for a in range(int(math.log2(n)), -1, -1):
++        if n % 2**a:
++            continue
++        p = n // 2**a
++        if p in (1, 2) or (_is_prime(p - 1) and (p - 1) % 4 == 3):
++            H = torch.ones(1, 1, dtype=torch.float64)
++            while H.shape[0] < 2**a:
++                H = torch.cat([torch.cat([H, H], 1), torch.cat([H, -H], 1)], 0)
++            P = torch.tensor([[1.0, 1.0], [1.0, -1.0]], dtype=torch.float64) if p == 2 else torch.ones(1, 1, dtype=torch.float64) if p == 1 else _paley(p - 1)
++            if p == 1 and a > 1:
++                return _sylvester(a // 2), _sylvester(a - a // 2)
++            return H, P
++    raise ValueError(f"no Hadamard construction here for order {n}")
++
++
++def _sylvester(a: int) -> torch.Tensor:
++    H = torch.ones(1, 1, dtype=torch.float64)
++    while H.shape[0] < 2**a:
++        H = torch.cat([torch.cat([H, H], 1), torch.cat([H, -H], 1)], 0)
++    return H
++
++
++def rht(n: int, seed: int) -> torch.Tensor:
++    """A randomized Hadamard transform H·diag(s), random signs s: orthogonal, and it spreads any weight across all n inputs."""
++    s = torch.where(torch.rand(n, generator=torch.Generator().manual_seed(seed), dtype=torch.float64) < 0.5, -1.0, 1.0)
++    return hadamard(n) * s[None, :]
+diff --git a/base/public_eval.py b/current/public_eval.py
+index a7d3cd1..9eda357 100644
+--- a/base/public_eval.py
++++ b/current/public_eval.py
+@@ -59,7 +59,7 @@ def gguf_map(model, base_gguf, cache):
+     for n, p in params.items():
+         by_numel.setdefault(p.numel(), []).append(n)
+ 
+-    def layouts(A_, shape):
++    def layouts(A_, shape, name):
+         yield "id", A_.reshape(shape)
+         if A_.dim() == 2 and A_.T.shape == shape:
+             yield "T", A_.T
+@@ -67,6 +67,10 @@ def gguf_map(model, base_gguf, cache):
+             for h in heads:
+                 if A_.shape[0] % (2 * h) == 0:
+                     yield f"unpermute:{h}", G.unpermute(A_, h)
++        transform = G.qwen35_layout(name, cfg)
++        # GDN axes require the native (out, in) shape, not another same-size candidate's orientation.
++        if transform and A_.shape == (shape[0], int(np.prod(shape[1:]))):
++            yield transform, G.restore_layout(A_, transform).reshape(shape)
+     out, used, unmatched = {}, set(), []
+     r = GGUFReader(str(base_gguf))
+     for t in r.tensors:
+@@ -78,14 +82,17 @@ def gguf_map(model, base_gguf, cache):
+         for n in by_numel.get(A_.numel(), []):
+             if n in used:
+                 continue
+-            P = params[n].detach().float().cpu()
+-            for tr, X in layouts(A_, P.shape):
+-                x, y = X.reshape(-1)[:256], P.reshape(-1)[:256]
++            parameter = params[n].detach()
++            for tr, X in layouts(A_, parameter.shape, n):
++                x, y = X.reshape(-1)[:256], parameter.reshape(-1)[:256].float().cpu()
+                 c = float((x * y).sum() / (x * x).sum().clamp(min=1e-30))
+                 if not torch.allclose(c * x, y, rtol=1e-2, atol=1e-6):
+                     continue
++                P = parameter.float().cpu()
+                 c = float((X * P).sum() / (X * X).sum())
+                 if float((c * X - P).abs().max()) <= 1e-2 * float(P.abs().max()):
++                    if "qwen3_5" in cfg.model_type and not torch.equal((c * X).to(parameter.dtype), parameter.cpu()):
++                        continue
+                     found = [n, tr, c]
+                     break
+             if found:
+@@ -116,7 +123,7 @@ def load_gguf(model, path, mapping):
+         a = torch.from_numpy(dequantize(t.data, t.tensor_type).astype(np.float32))
+         P = params[n]
+         X = a.reshape(int(t.shape[1]), int(t.shape[0])) if len(t.shape) >= 2 else a
+-        X = X.T if tr == "T" else G.unpermute(X, int(tr.split(":")[1])) if tr.startswith("unpermute") else X
++        X = G.restore_layout(X, tr)
+         P.data.copy_((c * X).reshape(P.shape).to(P.dtype))
+         hit += 1
+     return nbytes, hit
+diff --git a/base/quantize.py b/current/quantize.py
+index ea551bf..03544d7 100644
+--- a/base/quantize.py
++++ b/current/quantize.py
+@@ -63,6 +63,8 @@ WikiText-2: calibration on 64 random training windows of 512 tokens, perplexity
+     HF_HUB_OFFLINE=1 python quantize.py --program lm4x --out results/qwen35/lm4x.json
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import argparse
+@@ -329,7 +331,7 @@ def _has_hadamard(n):
+         return False
+ 
+ 
+-def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None):
++def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None, input_cache=None):
+     """One matrix's quantized program (an opgraph Net) for its target W and input statistics H."""
+     fam, b, _ = parse(program)
+     if fam == "fp":  # the checkpoint's bfloat16 values, exactly
+@@ -344,7 +346,7 @@ def word(program, W, H, seed, trellis, in_seed=None, out_rot=True, G=None):
+         return N.nested_words([W], H, [seed], b, [b], 0.4, [1.0], N.lloyd_max(b), in_seed=in_seed, out_rot=out_rot, G=G)[b][0]
+     if fam == "ter":
+         return N.nested_words([W], H, [seed], 2, [2], 0.4, [1.0], N.lloyd_max_levels(b), in_seed=in_seed, out_rot=out_rot)[2][0]
+-    return C.ldlq_words([W], H, trellis[b], [seed], in_seed=in_seed, out_rot=out_rot)[0]
++    return C.ldlq_words([W], H, trellis[b], [seed], in_seed=in_seed, out_rot=out_rot, input_cache=input_cache)[0]
+ 
+ 
+ def embedding_buckets(V, first=256):
+@@ -504,10 +506,19 @@ def trellis_states(values, table):
+     t = table.double().flatten()
+     st, order = t.sort()
+     v = values.double().contiguous()
+-    pos = torch.searchsorted(st, v).clamp(1, len(st) - 1)
+-    pos = torch.where((v - st[pos - 1]).abs() <= (st[pos] - v).abs(), pos - 1, pos)
+-    assert float((st[pos] - v).abs().max()) < 1e-9, "a trellis value not in its table"
+-    return order[pos].to(torch.int16)
++    # Preserve CPU sort/tie order and FP64 comparisons; only independent lookup
++    # chunks run on CUDA, and the compact integer result returns to the CPU.
++    dev = DEV if C.GPU_SWEEP and DEV == "cuda" else "cpu"
++    levels, indices = st.to(dev), order.to(dev)
++    flat = v.reshape(-1)
++    states = torch.empty(flat.shape, dtype=torch.int16, device="cpu")
++    for start in range(0, flat.numel(), 1 << 22):
++        chunk = flat[start:start + (1 << 22)].to(dev)
++        pos = torch.searchsorted(levels, chunk).clamp(1, len(levels) - 1)
++        pos = torch.where((chunk - levels[pos - 1]).abs() <= (levels[pos] - chunk).abs(), pos - 1, pos)
++        assert float((levels[pos] - chunk).abs().max()) < 1e-9, "a trellis value not in its table"
++        states[start:start + len(chunk)] = indices[pos].to(device="cpu", dtype=torch.int16)
++    return states.reshape(v.shape)
+ 
+ 
+ def trellis_code_entry(net, shape, bits, in_seed):
+@@ -958,6 +969,7 @@ def main():
+     ap.add_argument("--data", choices=["wikitext", "mix"], default="wikitext", help="calibration text (and token frequencies)")
+     ap.add_argument("--eval-mix", type=int, default=0, help="held-out windows per text-mix source to evaluate (0: 8 with --data mix)")
+     ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
++    ap.add_argument("--cpu-offload", action="store_true", help="keep both plan builds in CPU memory, staging one decoder layer at a time on CUDA")
+     ap.add_argument("--stream-cancel", type=float, default=0.0, help="cross-term programs: fit the last matrix of each residual branch to also cancel this share of the error already in the stream")
+     ap.add_argument("--output-shaping", action="store_true", help="Lloyd–Max words: also shape each matrix's rounding error toward outputs that matter less (needs --rot in-shared)")
+     ap.add_argument("--trellis-rows", default="", help="width,look: run trellis paths along each row, settling width columns at a time and looking look columns ahead")
+@@ -988,6 +1000,10 @@ def main():
+     ap.add_argument("--save-codes", default="", help="keep a scalar-coded build's codes, levels, row scales and rotations here, for finetune.py (needs --rot in-shared)")
+     ap.add_argument("--out", required=True)
+     args = ap.parse_args()
++    if args.cpu_offload and (DEV != "cuda" or args.program != "plan" or args.rotation != "none"
++                            or args.ft_epochs or args.gauges or args.gsq_steps or args.output_shaping
++                            or args.token_weights not in ("", "digits", "results")):
++        ap.error("--cpu-offload supports CUDA plan PTQ without whole-model rewrites or gradient-based calibration")
+     if args.skip_eval and (args.program in ("orig", "dense") or args.check_only or args.tasks or args.calib_kl):
+         ap.error("--skip-eval cannot be combined with evaluation-only modes, --check-only, --tasks or --calib-kl")
+     if args.row_plan:
+@@ -1026,12 +1042,12 @@ def main():
+     if json.loads((Path(path) / "config.json").read_text()).get("quantization_config", {}).get("quant_method") == "mxfp4":
+         from transformers import Mxfp4Config  # gpt-oss ships MXFP4 experts: the reference is their dequantized values
+         qcfg = {"quantization_config": Mxfp4Config(dequantize=True)}
+-    ref = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, **qcfg).to(DEV).eval()
++    ref = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, **qcfg).to("cpu" if args.cpu_offload else DEV).eval()
+     for p in ref.parameters():
+         p.requires_grad_(False)
+     qwen35 = "qwen3_5" in ref.config.model_type
+     name = repo.split("/")[-1]
+-    tag = "qwen35" if qwen35 else name.lower()  # the token caches: one per tokenizer
++    tag = "qwen35" if qwen35 and not args.cpu_offload else name.lower()  # keep the 3.8 tokenizer's caches separate
+     assert qwen35 or args.rotation == "none", "the rotation is written for Qwen3.5's norms"
+     tests = {}
+     if not args.skip_eval:
+@@ -1131,6 +1147,53 @@ def main():
+     token_w = token_weights("digits" if args.token_weights == "guided" else args.token_weights, ref, chunks, args.token_gamma, floor=args.token_floor, tok=tok) if args.token_weights else None
+     token_w = None if token_w is None else tuple(w.to(DEV) for w in token_w)  # on the GPU once, not copied for every matrix
+     model = copy.deepcopy(ref)
++    offload_pinned = set()
++    offload_modules = {}
++    if args.cpu_offload:
++        # Hooks are installed after deepcopy so each model owns its own module objects.
++        # always_call also returns a module to CPU when the capture hooks raise Stop.
++        def stage_in(module, _args):
++            module.to(DEV)
++
++        def stage_out(module, _args, _output):
++            if id(module) not in offload_pinned:
++                module.to("cpu")
++
++        for mm in (ref, model):
++            layer_path, decoder = A.decoder_layers(mm)
++            parent = mm.get_submodule(layer_path.rsplit(".", 1)[0])
++            embedding, output, _ = A.head_and_embedding(mm)
++            modules = [embedding, *decoder, parent.norm, output]
++            seen = set()
++            for module in modules:
++                if module is not None and id(module) not in seen:
++                    seen.add(id(module))
++                    module.register_forward_pre_hook(stage_in)
++                    module.register_forward_hook(stage_out, always_call=True)
++            offload_modules[id(mm)] = seen
++
++    def bulk_forward(label, mm, callback, *values):
++        if not args.cpu_offload:
++            return callback(mm, *values)
++        if offload_pinned:
++            raise RuntimeError("bulk statistics cannot run while quantization layers are pinned")
++        started, completed = time.time(), False
++        log(f"  statistics {label}: starting with one model on GPU")
++        pins = offload_modules[id(mm)]
++        offload_pinned.update(pins)
++        try:
++            for other in (ref, model):
++                if other is not mm:
++                    other.to("cpu")
++            mm.to(DEV)
++            result = callback(mm, *values)
++            completed = True
++            return result
++        finally:
++            mm.to("cpu")
++            offload_pinned.difference_update(pins)
++            torch.cuda.empty_cache()
++            log(f"  statistics {label}: {'completed' if completed else 'failed'} ({time.time() - started:.1f}s)")
+     if args.weights_from:  # quantize weights trained at a wider width, toward the original's outputs
+         from math_eval import load_dense
+         res["weights from"] = {"path": args.weights_from, **load_dense(model, args.weights_from)}
+@@ -1259,7 +1322,7 @@ def main():
+             freq = freq.clone()
+             freq[sorted(tok.added_tokens_decoder)] = math.inf
+         order = torch.sort(-freq, stable=True).indices
+-        H_out = head_inputs(ref, chunks)
++        H_out = bulk_forward("head inputs", ref, head_inputs, chunks)
+         if plan.get("embed"):
+             pname = {id(p_): n for n, p_ in model.named_parameters()}
+             b_, n_ = quantize_embedding(emb.weight, plan["embed"], embedding_environment(H_out, "both" if tied else "lookup"), order, name=pname[id(emb.weight)])
+@@ -1293,8 +1356,8 @@ def main():
+         for h_ in hooks:
+             h_.remove()
+         return out
+-    kwr = layer_args(ref)
+-    kwq = layer_args(model)  # its own: per-layer inputs through its quantized tables, and its own shared-KV dictionaries
++    kwr = bulk_forward("reference layer arguments", ref, layer_args)
++    kwq = bulk_forward("quantized layer arguments", model, layer_args)  # its own inputs and shared-KV dictionaries
+ 
+     def first_input(m, a, k):
+         raise Stop(a[0] if a else k["hidden_states"])
+@@ -1313,11 +1376,11 @@ def main():
+     hq = layer0_inputs(model if bits_e else ref)  # through the quantized embedding when there is one
+     hr = (layer0_inputs(ref) if bits_e else [h.clone() for h in hq]) if keep_ref else None
+ 
+-    def best_word(p, target, H, seed, in_seed=None, out_rot=True, G=None):
++    def best_word(p, target, H, seed, in_seed=None, out_rot=True, G=None, input_cache=None):
+         """The program's word; with --seeds, the randomized Hadamard seed (an exact choice) with the least H-weighted error."""
+         tr = trellis_for(target.shape[0])
+         if args.seeds <= 1 or H is None or parse(p)[0] not in ("tr", "lm"):
+-            return word(p, target, H, seed, tr, in_seed, out_rot, G)
++            return word(p, target, H, seed, tr, in_seed, out_rot, G, input_cache)
+         best = None
+         for t in range(args.seeds):
+             net = word(p, target, H, seed + 7919 * t, tr)
+@@ -1409,6 +1472,10 @@ def main():
+         ps = [prog(i, n) for n in names]
+         x_stage = any(parse(p)[2] for p in ps)
+         H = M = None
++        # One stage shares H and its input seed across matrices and row groups.
++        # Never retain weight targets, row scales, Viterbi state or sweep state here.
++        trellis_cache = {} if args.rot == "in-shared" and args.seeds == 1 else None
++        trellis_calls = 0
+         if any(parse(p)[0] not in DATA_FREE for p in ps):  # the stage's input statistics, from the stream it will see (and the reference)
+             n_in = mods[0].in_features
+             H = torch.zeros(n_in, n_in, device=DEV)
+@@ -1528,7 +1595,10 @@ def main():
+                           ((order[:n_move], k_ + 1), (order[n_move:len(imp) - n_move], k_), (order[len(imp) - n_move:], k_ - 1)) if len(rows)]
+             if groups is not None:
+                 def round_group(rows, bits):
+-                    return best_word(re.sub(r"\d+", str(bits), p, count=1), target[rows], H, seed, in_seed, False)
++                    nonlocal trellis_calls
++                    trellis_calls += 1
++                    return best_word(re.sub(r"\d+", str(bits), p, count=1), target[rows], H, seed, in_seed, False,
++                                     input_cache=trellis_cache)
+                 Wq, rate, entry = quantize_row_groups(target, groups, round_group, in_seed, CODES is not None or capture_this)
+                 mod.weight.data = Wq.to(mod.weight.dtype).to(DEV)
+                 if CODES is not None:
+@@ -1565,6 +1635,8 @@ def main():
+         for name in stage.get("keep", []):  # small linears: kept at 16 bits, counted
+             bits_ += 16 * L.get_submodule(name).weight.numel()
+             n_ += L.get_submodule(name).weight.numel()
++        if trellis_calls and trellis_cache is not None:
++            log(f"    layer {i} {names[0]}: input environments {len(trellis_cache)}, reused {trellis_calls - len(trellis_cache)} times")
+         return bits_, n_
+ 
+     def expert_programs(i, name, E):
+@@ -1626,6 +1698,10 @@ def main():
+     for i in range(n_layers):
+         t0 = time.time()
+         L, Lr = layers[i], rlayers[i]
++        if args.cpu_offload:
++            offload_pinned.update((id(L), id(Lr)))
++            L.to(DEV)
++            Lr.to(DEV)
+         blocks = {}
+         for st in stages_of[i]:
+             blocks.setdefault((st.get("names") or st.get("keep") or [st.get("name")])[0].split(".")[0], []).append(st)
+@@ -1682,6 +1758,11 @@ def main():
+             hq = [run_layer(L, h, kwq[i][c]) for c, h in enumerate(hq)]
+             if keep_ref:
+                 hr = [run_layer(Lr, h, kwr[i][c]) for c, h in enumerate(hr)]
++        if args.cpu_offload:
++            offload_pinned.difference_update((id(L), id(Lr)))
++            L.to("cpu")
++            Lr.to("cpu")
++            torch.cuda.empty_cache()
+         timing.append(round(time.time() - t0, 1))
+         if args.library and library:  # this layer's other widths, then out of memory
+             Path(args.library).mkdir(parents=True, exist_ok=True)
+@@ -1722,10 +1803,12 @@ def main():
+         log(f"  exported {len(EXPORT.meta['matrices'])} matrices and {len(EXPORT.meta['tables'])} tables to {out}")
+     if args.save:  # preserve every changed parameter's actual evaluated values and dtype
+         rp = dict(ref.named_parameters())
+-        changed = {n: p_.detach().cpu().clone() for n, p_ in model.named_parameters() if n in rp and not torch.equal(p_, rp[n])}
++        changed = {n: (p_.detach() if args.cpu_offload else p_.detach().cpu().clone())
++                   for n, p_ in model.named_parameters() if n in rp and not torch.equal(p_, rp[n])}
+         Path(args.save).parent.mkdir(parents=True, exist_ok=True)
+         torch.save({"params": changed, "text weights": res["text weights"], "program": args.program, "plan": args.plan}, args.save)
+         log(f"  saved {len(changed)} quantized tensors to {args.save}")
++        del changed  # Offload evaluation replaces CPU storages; do not retain the saved old values.
+     t0 = time.time()
+     if args.skip_eval:
+         evaluation = {"evaluation": "skipped by --skip-eval", "eval": 0, "ctx": None}
+diff --git a/current/release_validation.py b/current/release_validation.py
+new file mode 100644
+index 0000000..f2856e2
+--- /dev/null
++++ b/current/release_validation.py
+@@ -0,0 +1,233 @@
++"""Evaluate actual packed weights against a dense build before release.
++
++Run reference and packed in separate processes. This writes evaluation reports,
++not a publication approval, completion marker, or Hugging Face upload.
++"""
++
++# Copyright (c) 2026 W-World-Labs contributors. SPDX-License-Identifier: MIT
++# Reuses Shin Megami Boson's LookAtMyQuant model evaluation and packed decoding (MIT).
++
++from __future__ import annotations
++
++import argparse
++import gc
++import hashlib
++import json
++import math
++from pathlib import Path
++import time
++
++import torch
++import torch.nn.functional as F
++from transformers import AutoTokenizer
++
++from compiler_artifact import file_sha256
++from load_packed import load_packed
++from math_eval import B, load_dense, solve, summary, token_ids
++from row_allocation import _write_json, load_original_model
++
++PROTOCOL = Path(__file__).parent / "results/protocols/math216.json"
++PROMPTS = [
++    ("english", "Explain in two sentences why the sky appears blue."),
++    ("chinese", "请用两句话说明量化模型为什么能节省内存。"),
++    ("code", "Write a Python function that returns the sum of the squares of a list of integers."),
++    ("math", "Compute 123 * 456 and briefly show your calculation."),
++]
++SCOPE = "Additional 4x128 WikiText-2 validation windows; not the main 8/16x512 evaluation."
++
++
++@torch.no_grad()
++def _capture(model, ids):
++    probabilities, loss = [], 0.0
++    for index, window in enumerate(ids):
++        x = window[None].to("cuda")
++        lp = F.log_softmax(model(x, use_cache=False).logits.float(), -1)
++        if not bool(torch.isfinite(lp).all()):
++            raise ValueError("nonfinite model log probabilities")
++        loss -= float(lp[:, :-1].gather(-1, x[:, 1:, None]).sum())
++        probabilities.append(lp.cpu())
++        print(f"Captured window {index + 1}/{len(ids)}", flush=True)
++    return torch.cat(probabilities), math.exp(loss / (ids.shape[0] * (ids.shape[1] - 1)))
++
++
++def _compare(reference, actual):
++    if reference.shape != actual.shape:
++        raise ValueError("reference and actual distributions have different shapes")
++    total = reference.shape[0] * reference.shape[1]
++    kl_sum = kl_max = absolute = squared = maximum = same = 0.0
++    for ref_window, got_window in zip(reference, actual):
++        ref, got = ref_window.double(), got_window.double()
++        ref = ref - torch.logsumexp(ref, -1, keepdim=True)
++        got = got - torch.logsumexp(got, -1, keepdim=True)
++        error = got - ref
++        kl = (ref.exp() * (ref - got)).sum(-1)
++        kl_sum += float(kl.sum())
++        kl_max = max(kl_max, float(kl.max()))
++        absolute += float(error.abs().sum())
++        squared += float(error.square().sum())
++        maximum = max(maximum, float(error.abs().max()))
++        same += int((ref.argmax(-1) == got.argmax(-1)).sum())
++    entries = reference.numel()
++    return {"kl_reference_to_actual_mean": kl_sum / total, "kl_reference_to_actual_max": kl_max,
++            "logprob_abs_mean": absolute / entries, "logprob_abs_max": maximum,
++            "logprob_rmse": math.sqrt(squared / entries), "top1_agreement": same / total}
++
++
++@torch.no_grad()
++def _generate(model, tokenizer):
++    results = []
++    for kind, prompt in PROMPTS:
++        text = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False,
++                                             add_generation_prompt=True, enable_thinking=False)
++        inputs = tokenizer(text, return_tensors="pt").to("cuda")
++        generated = model.generate(**inputs, do_sample=False, temperature=None, top_p=None, top_k=None,
++                                   max_new_tokens=32, repetition_penalty=1.0, use_cache=True,
++                                   pad_token_id=(tokenizer.eos_token_id if tokenizer.pad_token_id is None
++                                                 else tokenizer.pad_token_id))
++        new = generated[0, inputs.input_ids.shape[1]:].cpu()
++        results.append({"kind": kind, "prompt": prompt, "input_ids": inputs.input_ids[0].cpu().tolist(),
++                        "new_tokens": new.tolist(), "text": tokenizer.decode(new, skip_special_tokens=True)})
++        print(f"Generated {kind} prompt ({len(new)} tokens)", flush=True)
++    return results
++
++
++def reference_phase(args):
++    tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
++    ids = token_ids(tokenizer, "validation", args.cache_tag).cpu()
++    windows = ids[:len(ids) // 128 * 128].reshape(-1, 128)
++    if len(windows) < 4:
++        raise ValueError("WikiText validation cache has fewer than four windows")
++    ids = windows[torch.randperm(len(windows), generator=torch.Generator().manual_seed(0))[:4]].clone()
++    model = load_original_model(args.model_path, dtype=args.dtype, device="cuda")
++    original, original_ppl = _capture(model, ids)
++    load = load_dense(model, args.dense)
++    dense, dense_ppl = _capture(model, ids)
++    prompts = _generate(model, tokenizer)
++    del model
++    gc.collect()
++    torch.cuda.empty_cache()
++    payload = {"ids": ids, "original_logprobs": original, "dense_logprobs": dense, "dense_prompts": prompts}
++    target = args.work_dir / "release-reference.pt"
++    temporary = target.with_suffix(".tmp")
++    torch.save(payload, temporary)
++    temporary.replace(target)
++    print("Hashing reference cache and dense checkpoint after releasing the GPU model", flush=True)
++    receipt = {"phase": "reference", "dtype": args.dtype, "cache_tag": args.cache_tag, "scope": SCOPE,
++               "windows": list(ids.shape), "window_seed": 0, "max_prompt_new_tokens": 32,
++               "ids_sha256": hashlib.sha256(ids.numpy().tobytes()).hexdigest(),
++               "reference_file": target.name, "reference_sha256": file_sha256(target),
++               "model_snapshot": Path(args.model_path).name,
++               "config_sha256": file_sha256(Path(args.model_path) / "config.json"),
++               "dense_sha256": file_sha256(args.dense), "dense_load": load,
++               "math_protocol_sha256": file_sha256(PROTOCOL),
++               "original_ppl": original_ppl, "dense_ppl": dense_ppl,
++               "original_to_dense": _compare(original, dense)}
++    _write_json(args.work_dir / "release-reference.json", receipt)
++    return receipt
++
++
++def packed_phase(args):
++    receipt = json.loads((args.work_dir / "release-reference.json").read_text())
++    reference_file = args.work_dir / "release-reference.pt"
++    if (receipt["dtype"] != args.dtype or receipt["cache_tag"] != args.cache_tag
++            or receipt["reference_sha256"] != file_sha256(reference_file)
++            or receipt["math_protocol_sha256"] != file_sha256(PROTOCOL)
++            or receipt["config_sha256"] != file_sha256(args.packed / "config.json")):
++        raise ValueError("reference dtype, tokenizer namespace, protocol, config or file hash changed")
++    reference = torch.load(reference_file, map_location="cpu", mmap=True, weights_only=True)
++    ids = reference["ids"]
++    if (list(ids.shape) != [4, 128]
++            or hashlib.sha256(ids.numpy().tobytes()).hexdigest() != receipt["ids_sha256"]):
++        raise ValueError("reference window identity changed")
++    problems = json.loads(PROTOCOL.read_text())["problems"]
++    if len(problems) != 216 or not all(B.check(problem) for problem in problems):
++        raise ValueError("expected the unchanged independent 216-question math protocol")
++    baseline = baseline_hash = None
++    if args.baseline_math:
++        raw = args.baseline_math.read_bytes()
++        baseline, baseline_hash = json.loads(raw), hashlib.sha256(raw).hexdigest()
++        original_rows = baseline["models"]["orig"]["rows"]
++        if (set(original_rows) != {problem["id"] for problem in problems}
++                or baseline["max new tokens"] != args.max_new or baseline["thinking"]
++                or not baseline["greedy"] or baseline.get("dtype", "float32") != args.dtype):
++            raise ValueError("baseline math must use the same ids, dtype, token limit and greedy no-thinking recipe")
++    model = load_packed(args.packed, dtype=args.dtype, device="cuda", decode_device="cuda")
++    tokenizer = AutoTokenizer.from_pretrained(args.packed, padding_side="left", local_files_only=True)
++    if tokenizer.pad_token_id is None:
++        tokenizer.pad_token = tokenizer.eos_token
++    actual, ppl = _capture(model, ids)
++    prompts = _generate(model, tokenizer)
++    prompt_checks = []
++    for expected, actual_prompt in zip(reference["dense_prompts"], prompts):
++        if expected["kind"] != actual_prompt["kind"] or expected["input_ids"] != actual_prompt["input_ids"]:
++            raise ValueError("packed tokenizer changed a fixed prompt")
++        prompt_checks.append({"kind": expected["kind"], "prompt": expected["prompt"],
++                              "same_greedy_tokens": expected["new_tokens"] == actual_prompt["new_tokens"],
++                              "dense_text": expected["text"], "packed_text": actual_prompt["text"]})
++    report = {"phase": "packed", "dtype": args.dtype, "scope": SCOPE, "windows": list(ids.shape),
++              "ids_sha256": receipt["ids_sha256"], "reference_sha256": receipt["reference_sha256"],
++              "dense_sha256": receipt["dense_sha256"], "model_snapshot": receipt["model_snapshot"],
++              "packed_manifest_sha256": file_sha256(args.packed / "artifact.json"),
++              "packed_weights_sha256": file_sha256(args.packed / "weights.bin"),
++              "math_protocol_sha256": receipt["math_protocol_sha256"],
++              "original_ppl": receipt["original_ppl"], "dense_ppl": receipt["dense_ppl"], "packed_ppl": ppl,
++              "packed_to_original_ppl_ratio": ppl / receipt["original_ppl"],
++              "dense_to_packed": _compare(reference["dense_logprobs"], actual),
++              "original_to_dense": receipt["original_to_dense"],
++              "original_to_packed": _compare(reference["original_logprobs"], actual),
++              "prompts": prompt_checks, "max_prompt_new_tokens": 32,
++              "math": {"state": "running", "problems": len(problems), "batch": args.batch,
++                       "max_new_tokens": args.max_new, "thinking": False, "greedy": True},
++              "publication": "Not decided by this CLI; math retention and PPL/KL require release review."}
++    _write_json(args.out, report)
++    rows = solve(model, tokenizer, problems, args.batch, args.max_new, thinking=False)
++    report["math"].update(state="completed", summary=summary(problems, rows), rows=rows)
++    if baseline is not None:
++        original_right = sum(bool(row["correct"]) for row in baseline["models"]["orig"]["rows"].values())
++        if not original_right:
++            raise ValueError("original math score is zero; retention is undefined")
++        retention = report["math"]["summary"]["right"] / original_right
++        report["math"].update(original_right=original_right, retention=retention,
++                               minimum_retention=0.9, retention_passed=retention >= 0.9,
++                               baseline_sha256=baseline_hash)
++    else:
++        report["math"].update(retention=None, retention_passed=None, reason="--baseline-math was not supplied")
++    del model
++    gc.collect()
++    torch.cuda.empty_cache()
++    return report
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--phase", choices=["reference", "packed"], required=True)
++    parser.add_argument("--model-path", type=Path)
++    parser.add_argument("--dense", type=Path)
++    parser.add_argument("--packed", type=Path)
++    parser.add_argument("--work-dir", type=Path, required=True)
++    parser.add_argument("--out", type=Path, required=True)
++    parser.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
++    parser.add_argument("--cache-tag", default="qwen35")
++    parser.add_argument("--batch", type=int, default=4)
++    parser.add_argument("--max-new", type=int, choices=[1024, 2048], default=1024)
++    parser.add_argument("--baseline-math", type=Path)
++    args = parser.parse_args()
++    if ((args.phase == "reference" and (args.model_path is None or args.dense is None))
++            or (args.phase == "packed" and args.packed is None)):
++        parser.error("reference needs --model-path/--dense; packed needs --packed")
++    if args.batch < 1:
++        parser.error("--batch must be positive")
++    if not torch.cuda.is_available():
++        parser.error("this release evaluation uses CUDA, like the main Colab math evaluation")
++    torch.backends.cuda.matmul.allow_tf32 = False
++    torch.backends.cudnn.allow_tf32 = False
++    args.work_dir.mkdir(parents=True, exist_ok=True)
++    started = time.time()
++    report = reference_phase(args) if args.phase == "reference" else packed_phase(args)
++    report.update(seconds=round(time.time() - started, 1), torch_version=torch.__version__, tf32=False)
++    _write_json(args.out, report)
++    print(f"Saved {args.phase} evaluation: {args.out}", flush=True)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/base/row_importance.py b/current/row_importance.py
+index 39fa441..67ff999 100644
+--- a/base/row_importance.py
++++ b/current/row_importance.py
+@@ -8,6 +8,8 @@ log2(AM/GM) is the bits per weight that per-row widths are worth at the same cos
+     python row_importance.py --out results/row_importance.json     (run_batch.py: lm2RowImportance)
+ """
+ 
++# W-World-Labs modifications (2026-11-12); upstream: ShinMegamiBoson/lookatmyquant, MIT.
++
+ from __future__ import annotations
+ 
+ import argparse
+@@ -35,13 +37,14 @@ def main():
+     ap.add_argument("--windows", default="/root/.cache/huggingface/retrain/math_long_q35.pt")
+     ap.add_argument("--n", type=int, default=24)
+     ap.add_argument("--len", type=int, default=1024)
++    ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
+     ap.add_argument("--skip-calib", type=int, default=0, help="leave out the windows a build calibrates on: this many from the front of its order (quantize.py --calib-math)")
+     ap.add_argument("--save", default="/root/.cache/huggingface/retrain/row_importance.pt")
+     ap.add_argument("--out", required=True)
+     args = ap.parse_args()
+     t0 = time.time()
+     tok = AutoTokenizer.from_pretrained(args.model_path)
+-    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=torch.float32).to(DEV).eval()
++    model = AutoModelForCausalLM.from_pretrained(args.model_path, dtype=getattr(torch, args.dtype)).to(DEV).eval()
+     for p in model.parameters():
+         p.requires_grad_(False)
+     path, layers = A.decoder_layers(model)
+@@ -82,7 +85,7 @@ def main():
+             log(f"  {i + 1}/{len(w)} windows, {n_digit} digit positions ({time.time() - t0:.0f}s)")
+     for h in hooks:
+         h.remove()
+-    res = {"windows": len(w), "length": args.len, "digit positions": n_digit, "matrices": {}}
++    res = {"windows": len(w), "length": args.len, "dtype": args.dtype, "digit positions": n_digit, "matrices": {}}
+     saved, all_imp = {}, []
+     for k in mods:
+         imp = (gg[k] * yy[k]).clamp_min(1e-30)

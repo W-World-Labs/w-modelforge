@@ -19,4 +19,5 @@ colab/STATUS.json
 *.gguf
 weights.bin
 *.log
-!methods/lookatmyquant/results/completeness_*.log
+/methods/lookatmyquant/
+/methods/.lookatmyquant.*/

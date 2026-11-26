@@ -1,0 +1,2 @@
+# Unified diffs require one context prefix on empty lines.
+patches/lookatmyquant.patch whitespace=-blank-at-eol

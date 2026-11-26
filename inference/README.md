@@ -21,8 +21,9 @@ On 2026-11-12 UTC, the public 9B download/reference launch, CPU standard-HF expo
 Install hardware-appropriate PyTorch in an isolated environment first. The validated environment uses Torch 2.14.1+cu130 / Transformers 5.16.1. Keep external inference engines in separate environments from active Colab quantization.
 
 ```bash
-git clone https://github.com/W-World-Labs/w-modelforge.git
+git clone --recurse-submodules https://github.com/W-World-Labs/w-modelforge.git
 cd w-modelforge
+bash scripts/prepare_lookatmyquant.sh
 python -m pip install transformers==5.16.1 numpy==2.4.6 huggingface_hub safetensors pillow
 bash inference/download.sh W-World-Labs/Qwen3.5-9B-LAMQ2 ./models/qwen35-9b
 # An optional third argument pins an HF commit; default: main.

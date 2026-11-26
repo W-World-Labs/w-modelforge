@@ -2,13 +2,25 @@
 
 [中文说明](README.zh-CN.md)
 
-W-ModelForge is [W-World-Labs](https://github.com/W-World-Labs)' experimental project for model compression and inference acceleration. We maintain practical adaptations, reproducible recipes and measured results covering artifact size, quality, build cost and inference behavior.
+W-ModelForge is [W-World-Labs](https://github.com/W-World-Labs)' independently maintained project for model compression and inference acceleration. We maintain practical adaptations, reproducible recipes and measured results covering artifact size, quality, build cost and inference behavior.
 
-The first integrated method is **LookAtMyQuant**. The project uses a direct method directory and working scripts, without a plugin framework.
+**LookAtMyQuant** is the first upstream dependency. Shin Megami Boson maintains it independently. W-ModelForge owns the Colab recipes, inference tooling, evaluation and release workflows, and the adaptations that connect them to the upstream code.
+
+## Source setup
+
+```sh
+git clone --recurse-submodules https://github.com/W-World-Labs/w-modelforge.git
+cd w-modelforge
+bash scripts/prepare_lookatmyquant.sh
+```
+
+[`upstream/lookatmyquant`](upstream/lookatmyquant) is the upstream Git submodule, pinned to LookAtMyQuant 0.2.0 (`e36d2141015c26074fd0450e08729522c87c0775`). The preparation script applies the W-maintained [compatibility patch](patches/lookatmyquant.patch) in a generated `methods/lookatmyquant/` directory used by the existing recipes and scripts. We review upstream updates and commit the new pin and corresponding patch together. [Upstream maintenance and changes](UPSTREAM.md)
+
+The Colab recipe defaults to the historical W-ModelForge source revision for reproducibility. Pass `--source-commit <full-w-modelforge-sha>` with a new run ID to use the current layout. [Colab workflow](colab/README.md)
 
 | Method | Code and source | Current scope |
 | --- | --- | --- |
-| LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/), from [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), MIT | Qwen3.5-9B / Qwen3.8-27B language PTQ: trellis coding, LDLQ, Hadamard processing, Fisher row allocation and upstream EMA codebooks, with CPU/GPU offload and shared decomposition reuse. |
+| LookAtMyQuant | Generated at `methods/lookatmyquant/` from [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), MIT | Qwen3.5-9B / Qwen3.8-27B language PTQ: trellis coding, LDLQ, Hadamard processing, Fisher row allocation and upstream EMA codebooks, with CPU/GPU offload and shared decomposition reuse. |
 | Adaptive standard GGUF | Upstream `gguf_compiler.py` + `compiler.py`, MIT; [recipe](inference/GGUF-adaptive.md) | Fresh original-BF16 quantization with measured per-tensor KL and size-budget allocation over standard llama.cpp Q/IQ types. 9B and 27B native releases are public, with independently reviewed quality results below. |
 
 - [Inference guide](inference/README.md): download/checksum and multimodal reference launch scripts, dense HF export, and optional vLLM / llama.cpp conversion and serving. Legacy export quality and speed remain unmeasured; fresh-original GGUF has independent quality results below.
@@ -18,7 +30,7 @@ The first integrated method is **LookAtMyQuant**. The project uses a direct meth
 
 ## Source validation
 
-[GitHub Actions](https://github.com/W-World-Labs/w-modelforge/actions/workflows/source.yml) is the CI surface for this public source distribution. It scans the complete public Git history and checkout with checksum-pinned Gitleaks 8.30.1, limits every historical blob to 10 MiB and the current source tree to 100 MiB, rejects model/data caches and engine binaries, and checks Python/JSON/Bash syntax plus credential-free Colab CLI help. Only the four unchanged upstream EMA codebooks are permitted as tensor files. No runtime dependencies are installed and no models, datasets, credentials or release artifacts are uploaded by CI.
+[GitHub Actions](https://github.com/W-World-Labs/w-modelforge/actions/workflows/source.yml) runs source validation for each formal GitHub Release. It scans the complete public Git history and checkout with checksum-pinned Gitleaks 8.30.1, limits every historical blob to 10 MiB and the current source tree to 100 MiB, rejects model/data caches and engine binaries, and checks Python/JSON/Bash syntax plus credential-free Colab CLI help. Only the four unchanged upstream EMA codebooks are permitted as tensor files. No runtime dependencies are installed and no models, datasets, credentials or release artifacts are uploaded by CI.
 
 These are static source checks, not model-quality, GPU-performance, production or commercial-rights acceptance. The inherited unit/integration tests are retained for provenance and are not run. Local checkouts are for editing and metadata/secret review; CI validation runs on GitHub.
 
@@ -41,4 +53,4 @@ The separate fresh-original **adaptive standard GGUF** pilot has built a **4.622
 
 ## Attribution
 
-This repository retains LookAtMyQuant's Git history and GitHub fork relationship for traceability. **W-ModelForge's broader scope includes other compression and acceleration methods.** The original compiler, recipes, cached codebooks and historical experiments belong to Shin Megami Boson. Our changes are listed in [UPSTREAM.md](UPSTREAM.md); no endorsement by the original author or Qwen is implied.
+LookAtMyQuant's original compiler, recipes, fixed codebooks and historical experiments are credited to Shin Megami Boson. The submodule records their upstream source and revision. [Upstream and changes](UPSTREAM.md) identifies the adaptations maintained by W-World-Labs. Attribution does not imply endorsement by the original author or Qwen.

@@ -1,13 +1,25 @@
 # W-ModelForge
 
 [English](README.md)
-W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化与加速实验项目。我们在这里维护具体方案的适配、运行配方和实测结果，逐步比较压缩大小、质量、量化成本与推理表现。
+W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 独立维护的模型压缩与推理加速项目。我们在这里维护具体方案的适配、运行配方和实测结果，逐步比较压缩大小、质量、量化成本与推理表现。
 
-当前维护 **LookAtMyQuant** trellis 流程，并适配其标准 GGUF 编译路径。先把实际方案跑通并记录结果，不提前设计插件框架或通用后端接口。
+**LookAtMyQuant** 是首个上游依赖，由 Shin Megami Boson 独立维护。W-ModelForge 维护 Colab 配方、推理工具、评测和发行流程，以及与上游代码衔接所需的适配。
+
+## 准备源码
+
+```sh
+git clone --recurse-submodules https://github.com/W-World-Labs/w-modelforge.git
+cd w-modelforge
+bash scripts/prepare_lookatmyquant.sh
+```
+
+[`upstream/lookatmyquant`](upstream/lookatmyquant) 是上游 Git 子模块，固定在 LookAtMyQuant 0.2.0（`e36d2141015c26074fd0450e08729522c87c0775`）。准备脚本将 W-World-Labs 维护的[兼容补丁](patches/lookatmyquant.patch)应用到生成的 `methods/lookatmyquant/` 工作目录，已有配方和脚本继续使用该路径。我们逐次审阅上游变更，并在同一提交中更新上游固定版本和对应补丁。详见[上游维护与改动](UPSTREAM.md)。
+
+Colab 配方默认使用历史 W-ModelForge 提交，便于复现。若要用当前目录结构运行，请使用新的运行 ID，并传入 `--source-commit <W-ModelForge 完整提交 SHA>`。详见 [Colab 配方](colab/README.md)。
 
 | 方案 | 代码与来源 | 当前范围 |
 | --- | --- | --- |
-| LookAtMyQuant | [`methods/lookatmyquant/`](methods/lookatmyquant/)，来自 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
+| LookAtMyQuant | 在 `methods/lookatmyquant/` 生成，来源为 [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant)，MIT | Qwen3.5-9B / Qwen3.8-27B 文本 PTQ；trellis、LDLQ、Hadamard、Fisher 行级分配和上游 EMA 码本；CPU/GPU 卸载及重复分解复用。 |
 | 标准 GGUF 自适应量化 | 上游 `gguf_compiler.py` 与 `compiler.py`，MIT；[配方](inference/GGUF-adaptive.zh-CN.md) | 从原始 BF16 重新量化，对标准 Q/IQ 类型实测张量 KL、按大小预算分配。9B与27B原生版本均已公开，独立评测成绩分别记录。 |
 
 - [`colab/`](colab/README.md)：通过 Google 官方托管 Colab MCP 管理 G4，执行配方，使用 rclone 回传并校验。
@@ -16,6 +28,8 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 - [版权与第三方说明](NOTICE.md) / [许可证](LICENSE)：代码、模型权重与数据的许可分别记录。
 
 权重发布组织为 [Hugging Face / W-World-Labs](https://huggingface.co/W-World-Labs)。只有文件完整、对应格式权重能够独立加载并完成实际推理、216题数学成绩保留原模型至少90%，且PPL/KL无明显异常的版本才公开；评测结果、模型来源、许可与加载范围随模型卡一起发布。
+
+正式 GitHub Release 会触发[源码检查](https://github.com/W-World-Labs/w-modelforge/actions/workflows/source.yml)，核验公开源码和历史、源码体积、语法及 Colab CLI 帮助。模型质量与 GPU 性能由相应的实测流程验证。
 
 ## 当前进度
 
@@ -32,4 +46,4 @@ W-ModelForge 是 [W-World-Labs](https://github.com/W-World-Labs) 的模型量化
 
 ## 来源
 
-这个仓库保留了 LookAtMyQuant 的 Git 提交历史和 GitHub fork 关系，以便追溯首个方法的来源；**W-ModelForge 的项目范围包括后续其他量化与加速方案**。LookAtMyQuant 编译器、原始配方、缓存码本和历史实验归原作者 Shin Megami Boson。我们的修改另列于 [UPSTREAM.md](UPSTREAM.md)，不表示上游作者或 Qwen 的背书。
+LookAtMyQuant 的原始编译器、配方、固定码本和历史实验归原作者 Shin Megami Boson。子模块记录其上游来源与固定版本，W-World-Labs 维护的适配列于 [UPSTREAM.md](UPSTREAM.md)。归属说明不表示原作者或 Qwen 背书。

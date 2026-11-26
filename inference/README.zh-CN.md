@@ -21,8 +21,9 @@
 先克隆 W-ModelForge，在独立环境中安装与你的 CUDA 匹配的 PyTorch。已验证环境为 Torch 2.14.1+cu130 / Transformers 5.16.1；不要为安装另一个推理引擎覆盖正在量化的 Colab 环境。
 
 ```bash
-git clone https://github.com/W-World-Labs/w-modelforge.git
+git clone --recurse-submodules https://github.com/W-World-Labs/w-modelforge.git
 cd w-modelforge
+bash scripts/prepare_lookatmyquant.sh
 python -m pip install transformers==5.16.1 numpy==2.4.6 huggingface_hub safetensors pillow
 
 bash inference/download.sh W-World-Labs/Qwen3.5-9B-LAMQ2 ./models/qwen35-9b

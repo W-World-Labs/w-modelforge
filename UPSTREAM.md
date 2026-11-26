@@ -3,13 +3,14 @@
 ## Provenance
 
 - Original project: [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), by Shin Megami Boson.
-- Baseline: [`4716ffee3da205a8d1df94e4abc629040893fa53`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/4716ffee3da205a8d1df94e4abc629040893fa53).
+- Original upstream baseline for the historical W-ModelForge results: [`4716ffee3da205a8d1df94e4abc629040893fa53`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/4716ffee3da205a8d1df94e4abc629040893fa53). The individual run receipts record their exact W-ModelForge and model revisions.
+- Current submodule pin: LookAtMyQuant 0.2.0, [`e36d2141015c26074fd0450e08729522c87c0775`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/e36d2141015c26074fd0450e08729522c87c0775), dated 2026-11-20.
 - License: MIT. The original copyright and permission text remain in [LICENSE](LICENSE).
-- Maintained fork: [W-World-Labs/w-modelforge](https://github.com/W-World-Labs/w-modelforge). GitHub's fork relationship and original commit history are retained.
+- Integrating project: [W-World-Labs/w-modelforge](https://github.com/W-World-Labs/w-modelforge). The pristine upstream checkout is the Git submodule `upstream/lookatmyquant`. W-World-Labs maintains its changes in [`patches/lookatmyquant.patch`](patches/lookatmyquant.patch).
 
 ## W-World-Labs changes, 2026-11-12
 
-The inherited source has moved to `methods/lookatmyquant/`. Source filenames below are relative to that directory; `colab/` and project documents remain at the repository root.
+Run `git submodule update --init` followed by `bash scripts/prepare_lookatmyquant.sh` to generate the adapted working directory. Source filenames below are relative to `methods/lookatmyquant/`; W-ModelForge also maintains its own `colab/`, `inference/` and project documents.
 
 | Files | Change |
 | --- | --- |
@@ -25,15 +26,19 @@ The inherited source has moved to `methods/lookatmyquant/`. Source filenames bel
 | `gguf_compiler.py`, `public_eval.py`, `compiler.py` | Reuse the upstream GGUF compiler and allocator for standard llama.cpp tensor types without importing an unrelated trellis model. Add pinned local snapshots, separate converter Python, configurable candidate/calibration/evaluation sizes, incremental sensitivity reports, strict planned-type/size verification, complete native PPL/base-PPL/KL logs and input hashes, and inverse Qwen3.5 GDN V-head ordering only for matching matrix shapes, with exact original-BF16 mapping checks. The inverse ordering follows llama.cpp `93cf736a8d1d46aa922e27eb64aa712bcd5ebc30`, `conversion/qwen.py` (MIT); no external source is vendored. This is fresh quantization from original BF16, separate from trellis reconstruction/export. |
 | `release_validation.py` | Two-process actual-model release evaluation: fixed small held-out logprob/PPL comparison, public prompt generation and packed-model math216 using the existing scorer; reports hashes and math retention without uploading or approving publication. |
 | `colab/` | Official hosted Colab MCP client and a parameterized 9B/27B PTQ/rclone workflow; no credentials, model weights, or private run logs are committed. |
-| `README.md`, `NOTICE.md`, `LICENSE`, `UPSTREAM.md` | Fork identity, upstream credit, license separation and experiment limits. |
+| `README.md`, `NOTICE.md`, `LICENSE`, `UPSTREAM.md` | Project scope, upstream credit, license separation and experiment limits. |
 
 The trellis path retains the upstream trellis/LDLQ/Hadamard recipe with its cached EMA codebooks. Precision of the FP64 quantization algebra, CPU table ordering, nearest-level tie rules and path checks is retained. The current experiments do not include the upstream 4,000-step distillation.
 
 ## Maintenance
 
+The 0.2.0 pin adds upstream Python packaging, a `lamq` CLI entrypoint, and Apple Silicon MLX runtime source. The reconstructed W-ModelForge compiler, quantization, and evaluation paths and all four EMA codebooks match the prior distribution byte for byte. Existing published measurements retain their recorded source revisions. The upstream CLI and MLX runtime still need execution checks.
+
 On 2026-11-13, downstream source maintenance added GitHub-only static CI: complete-history/tree secret scanning, source-size and distribution-scope gates, Python/JSON/Bash syntax and credential-free Colab CLI entrypoints. It preserves the four original fixed EMA codebooks by exact Git blob, clarifies optional dependency licenses, and aligns the Colab README with the recipe's existing source pin. No quantization implementation, model artifact or measured result changed; CI is not model/GPU or commercial acceptance.
 
-Use `upstream` for the original repository and `origin` for this fork. Keep downstream commits separate from the baseline; inspect future upstream changes before merging. Record the source commit, model revision, dtype, recipe, environment and output hashes for each run. Never substitute an unrecorded branch head into an existing run.
+Fetch new revisions from the submodule remote and review changes since the recorded pin, including the MIT notice, fixed codebooks and the APIs used by W-ModelForge. Refresh the compatibility patch against the reviewed commit and stage the new gitlink with `git add upstream/lookatmyquant`. Move any previously prepared `methods/lookatmyquant/` work tree aside, then run `bash scripts/prepare_lookatmyquant.sh` and validate the affected entrypoints. Commit the changed gitlink, its matching patch and updated provenance in one W-ModelForge commit.
+
+Record the W-ModelForge commit, upstream commit, model revision, dtype, recipe, environment and output hashes for each new run. Reproduce existing runs from their recorded source commits.
 
 The initial trellis builds used the previously deployed9B memory patch, with later source optimizations applied to the queued27B process; those builds are complete. A running process is not automatically updated by a Git push. Completed-layer counts and GPU readings are progress observations, not reproducibility or quality claims.
 

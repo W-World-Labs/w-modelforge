@@ -9,6 +9,7 @@ Use the validated Torch/Transformers reference environment for measurement, and 
 The current pilot uses six 512-token sensitivity windows, 32 calibration chunks and the following candidate menu. Those are measurement/calibration inputs, separate from the frozen math216 acceptance set. The initial byte budget matches a stock Q3_K_M file; the final file size is checked separately. This development recipe is not a completed quality claim.
 
 ```bash
+bash scripts/prepare_lookatmyquant.sh
 export PYTHONPATH=/absolute/path/llama.cpp/gguf-py${PYTHONPATH:+:$PYTHONPATH}
 GGUF_WORK=/absolute/path/gguf-adaptive9
 METHOD=methods/lookatmyquant
