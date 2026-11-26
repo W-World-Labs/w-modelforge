@@ -30,7 +30,7 @@ index 8a35f6b..f04f84e 100644
  Permission is hereby granted, free of charge, to any person obtaining a copy
  of this software and associated documentation files (the "Software"), to deal
 diff --git a/base/README.md b/current/README.md
-index ed37971..f1c3845 100644
+index 13fe3f7..3cc7ca0 100644
 --- a/base/README.md
 +++ b/current/README.md
 @@ -1,3 +1,68 @@
@@ -102,7 +102,7 @@ index ed37971..f1c3845 100644
  # LookAtMyQuant
  
  LookAtMyQuant is a quantization compiler. It measures how much each stored piece of a model hurts the output when compressed. It then picks a code for each piece so the whole model fits a size budget with the least damage.
-diff --git a/current/compare_math_caps.py b/current/compare_math_caps.py
+diff --git a/base/compare_math_caps.py b/current/compare_math_caps.py
 new file mode 100644
 index 0000000..3ee2897
 --- /dev/null
@@ -446,10 +446,10 @@ index 0000000..3ee2897
 +if __name__ == "__main__":
 +    main()
 diff --git a/base/compiler.py b/current/compiler.py
-index cbe0bc2..83b257a 100644
+index b2e3424..8e2fbdf 100644
 --- a/base/compiler.py
 +++ b/current/compiler.py
-@@ -486,8 +486,10 @@ def price(r, t):
+@@ -628,8 +628,10 @@ def price(r, t):
      """One option's cost under target t, in bits per decoded token (stored bits for disk)."""
      if r["kind"] == "kv":
          return t["ctx"] * r["kv bits per token"]
@@ -459,10 +459,10 @@ index cbe0bc2..83b257a 100644
 +    if "gguf tensor" not in r:
 +        import quantize as rq
 +        fam = rq.parse(r["option"])[0] if (r["option"] == "fp16" or rq.PROGRAM.fullmatch(str(r["option"]))) else "other"
-     return (r["bits"] + t["ops"] * OPS.get(fam, 2.0) * r["weights"]) / t["batch"]
+     mul = int(r.get("exec_count", 1)) if (t["ctx"] > 0 or t["ops"] > 0) else 1
+     return mul * (r["bits"] + t["ops"] * OPS.get(fam, 2.0) * r["weights"]) / t["batch"]
  
- 
-@@ -526,6 +528,8 @@ def program_of(r, cross=True):
+@@ -725,6 +727,8 @@ def program_of(r, cross=True):
      o = str(r["option"])
      if r["kind"] == "kv":
          return int(o)
@@ -494,7 +494,7 @@ index 688c5bf..b3fc1f8 100644
              source = Path(model_dir) / name
              if source.exists():
                  assets[name] = source
-diff --git a/current/export_hf.py b/current/export_hf.py
+diff --git a/base/export_hf.py b/current/export_hf.py
 new file mode 100644
 index 0000000..04a6aba
 --- /dev/null
@@ -571,7 +571,7 @@ index 0000000..04a6aba
 +
 +if __name__ == "__main__":
 +    main()
-diff --git a/current/extract_vision.py b/current/extract_vision.py
+diff --git a/base/extract_vision.py b/current/extract_vision.py
 new file mode 100644
 index 0000000..d8ef42c
 --- /dev/null
@@ -1001,7 +1001,7 @@ index b193cd2..f981cb0 100644
      {"prepare": prepare, "measure": measure, "build": build, "evaluate": evaluate, "inspect": inspect}[args.cmd](args)
  
  
-diff --git a/current/load_packed.py b/current/load_packed.py
+diff --git a/base/load_packed.py b/current/load_packed.py
 new file mode 100644
 index 0000000..aca0cd2
 --- /dev/null
@@ -1307,7 +1307,7 @@ index d23e9ed..76217f2 100644
          for p in model.parameters():
              p.requires_grad_(False)
          if ref_lp is None:
-diff --git a/current/math_gguf.py b/current/math_gguf.py
+diff --git a/base/math_gguf.py b/current/math_gguf.py
 new file mode 100644
 index 0000000..b294dd9
 --- /dev/null
@@ -1532,7 +1532,7 @@ index 0000000..b294dd9
 +if __name__ == "__main__":
 +    main()
 diff --git a/base/opgraph/codes.py b/current/opgraph/codes.py
-index de3f82b..04641b8 100644
+index 2e4455f..6f47a2b 100644
 --- a/base/opgraph/codes.py
 +++ b/current/opgraph/codes.py
 @@ -28,6 +28,8 @@ Words
@@ -1635,58 +1635,65 @@ index de3f82b..04641b8 100644
      c.data = torch.movedim(Q.reshape(shape), -1, ax)
      c.domain = Domain(domain.kind, domain.bits, levels=domain.levels, axis=label, state_bits=domain.state_bits, fixed_start=domain.fixed_start)
      return n
-@@ -411,7 +370,7 @@ class RowTrellisCode:
+@@ -413,18 +372,8 @@ class RowTrellisCode:
+ _STAGE: dict = {}
  
  
+-def _stage(H, n, seed, dev):
+-    """Cache an input's rotation, rotated statistics and Cholesky factor across calls sharing the same H and seed."""
+-    key = (id(H), H._version, tuple(H.shape), n, seed, str(dev))
+-    if _STAGE.get("key") != key:
+-        _STAGE.clear()
+-        R_in = rht(n, seed).to(dev)
+-        _STAGE.update(key=key, H=H, R_in=R_in, env=Environment(R_in @ H.double().to(dev) @ R_in.T))
+-    return _STAGE["R_in"], _STAGE["env"]
+-
+-
  def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list[int], incoherent: bool = True,
 -               in_seed: int | None = None, out_rot: bool = True) -> list[Net]:
 +               in_seed: int | None = None, out_rot: bool = True, input_cache: dict | None = None) -> list[Net]:
      """(Gauge: incoherence →) Split(scale, per row, by RMS) → (block LDLQ sweep →) the code's Restrict and Split, for
      matrices that read the same input. They share one input transform (computed once at runtime), keep their own output
      transforms, and are swept together as one taller matrix: rows do not interact under Refit, so this is the same as
-@@ -422,7 +381,16 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
-     Ws = [W.to(dev).double() for W in Ws]
+@@ -436,11 +385,16 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
      n = Ws[0].shape[1]
      rows, cols = ("u" if out_rot else "o", "v") if incoherent else ("o", "i")
--    R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
+     seed_in = seeds[0] + 1 if in_seed is None else in_seed
+-    env = None
+-    if incoherent and H is not None:
+-        R_in, env = _stage(H, n, seed_in, dev)
+-    else:
+-        R_in = rht(n, seed_in).to(dev) if incoherent else None
++    stage_cache = _STAGE if input_cache is None else input_cache
 +    cache_key = cached = None
-+    if input_cache is not None:
-+        if H is None or in_seed is None or not incoherent or out_rot:
-+            raise ValueError("input cache requires an explicit input-only rotation and an unchanged H")
-+        cache_key = (id(H), H._version, n, int(in_seed), str(dev))
-+        cached = input_cache.get(cache_key)
-+    if cached is not None:
-+        R_in = cached[0]
-+    else:
-+        R_in = rht(n, seeds[0] + 1 if in_seed is None else in_seed).to(dev) if incoherent else None
++    if H is not None and incoherent:
++        cache_key = (id(H), H._version, n, seed_in, str(dev))
++        cached = stage_cache.get(cache_key)
++        if cached is None and input_cache is None:
++            _STAGE.clear()
++    R_in = None
++    if incoherent:
++        R_in = cached[1] if cached is not None else rht(n, seed_in).to(dev)
      nets = []
      for W, s in zip(Ws, seeds):
          net = matrix_net(W)
-@@ -436,7 +404,13 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
+@@ -454,8 +408,13 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
      S = X.pow(2).mean(1).sqrt().clamp(min=1e-12)
      settled = None
      if H is not None:
--        H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
+-        if env is None:
+-            env = Environment((R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev))
 +        if cached is None:
-+            H = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
-+            env = Environment(H)
-+            if input_cache is not None:
-+                input_cache[cache_key] = (R_in, env)
++            rotated = (R_in @ H.double().to(dev) @ R_in.T) if incoherent else H.double().to(dev)
++            env = Environment(rotated)
++            if cache_key is not None:
++                stage_cache[cache_key] = (H, R_in, env)
 +        else:
-+            env = cached[1]  # sweep reads dead/U and only mutates its own T; H/U stay unchanged.
++            env = cached[2]  # sweep reads dead/U and only mutates its own T.
          settled = torch.empty_like(X)  # the sweep's projection, in units of the row scale
  
          def project(j, x, T):
-@@ -449,7 +423,7 @@ def ldlq_words(Ws: list[torch.Tensor], H: torch.Tensor | None, code, seeds: list
-             q = q * S[:, None]
-             return q[:, 0] if code.width == 1 else q
- 
--        X = sweep(X, Environment(H), project, width=code.width)
-+        X = sweep(X, env, project, width=code.width)
-         settled = settled.cpu()
-     X, S = X.cpu(), S.cpu()
-     out, r0 = [], 0
-diff --git a/current/opgraph/hadamard.py b/current/opgraph/hadamard.py
+diff --git a/base/opgraph/hadamard.py b/current/opgraph/hadamard.py
 new file mode 100644
 index 0000000..418e711
 --- /dev/null
@@ -1811,7 +1818,7 @@ index a7d3cd1..9eda357 100644
          hit += 1
      return nbytes, hit
 diff --git a/base/quantize.py b/current/quantize.py
-index ea551bf..03544d7 100644
+index c1e98a7..71f639c 100644
 --- a/base/quantize.py
 +++ b/current/quantize.py
 @@ -63,6 +63,8 @@ WikiText-2: calibration on 64 random training windows of 512 tokens, perplexity
@@ -1841,7 +1848,7 @@ index ea551bf..03544d7 100644
  
  
  def embedding_buckets(V, first=256):
-@@ -504,10 +506,19 @@ def trellis_states(values, table):
+@@ -532,10 +534,19 @@ def trellis_states(values, table):
      t = table.double().flatten()
      st, order = t.sort()
      v = values.double().contiguous()
@@ -1865,15 +1872,15 @@ index ea551bf..03544d7 100644
  
  
  def trellis_code_entry(net, shape, bits, in_seed):
-@@ -958,6 +969,7 @@ def main():
-     ap.add_argument("--data", choices=["wikitext", "mix"], default="wikitext", help="calibration text (and token frequencies)")
-     ap.add_argument("--eval-mix", type=int, default=0, help="held-out windows per text-mix source to evaluate (0: 8 with --data mix)")
+@@ -989,6 +1000,7 @@ def main():
+                     help="override how token table rows are ranked into buckets (default: follow the plan's order)")
+     ap.add_argument("--eval-mix", type=int, default=0, help="held-out windows per text-mix source to evaluate (0: 8 with --data mix or templated)")
      ap.add_argument("--dtype", choices=["float32", "bfloat16"], default="float32")
 +    ap.add_argument("--cpu-offload", action="store_true", help="keep both plan builds in CPU memory, staging one decoder layer at a time on CUDA")
      ap.add_argument("--stream-cancel", type=float, default=0.0, help="cross-term programs: fit the last matrix of each residual branch to also cancel this share of the error already in the stream")
      ap.add_argument("--output-shaping", action="store_true", help="Lloyd–Max words: also shape each matrix's rounding error toward outputs that matter less (needs --rot in-shared)")
      ap.add_argument("--trellis-rows", default="", help="width,look: run trellis paths along each row, settling width columns at a time and looking look columns ahead")
-@@ -988,6 +1000,10 @@ def main():
+@@ -1019,6 +1031,10 @@ def main():
      ap.add_argument("--save-codes", default="", help="keep a scalar-coded build's codes, levels, row scales and rotations here, for finetune.py (needs --rot in-shared)")
      ap.add_argument("--out", required=True)
      args = ap.parse_args()
@@ -1884,7 +1891,7 @@ index ea551bf..03544d7 100644
      if args.skip_eval and (args.program in ("orig", "dense") or args.check_only or args.tasks or args.calib_kl):
          ap.error("--skip-eval cannot be combined with evaluation-only modes, --check-only, --tasks or --calib-kl")
      if args.row_plan:
-@@ -1026,12 +1042,12 @@ def main():
+@@ -1057,12 +1073,12 @@ def main():
      if json.loads((Path(path) / "config.json").read_text()).get("quantization_config", {}).get("quant_method") == "mxfp4":
          from transformers import Mxfp4Config  # gpt-oss ships MXFP4 experts: the reference is their dequantized values
          qcfg = {"quantization_config": Mxfp4Config(dequantize=True)}
@@ -1899,7 +1906,7 @@ index ea551bf..03544d7 100644
      assert qwen35 or args.rotation == "none", "the rotation is written for Qwen3.5's norms"
      tests = {}
      if not args.skip_eval:
-@@ -1131,6 +1147,53 @@ def main():
+@@ -1162,6 +1178,53 @@ def main():
      token_w = token_weights("digits" if args.token_weights == "guided" else args.token_weights, ref, chunks, args.token_gamma, floor=args.token_floor, tok=tok) if args.token_weights else None
      token_w = None if token_w is None else tuple(w.to(DEV) for w in token_w)  # on the GPU once, not copied for every matrix
      model = copy.deepcopy(ref)
@@ -1953,16 +1960,29 @@ index ea551bf..03544d7 100644
      if args.weights_from:  # quantize weights trained at a wider width, toward the original's outputs
          from math_eval import load_dense
          res["weights from"] = {"path": args.weights_from, **load_dense(model, args.weights_from)}
-@@ -1259,7 +1322,7 @@ def main():
-             freq = freq.clone()
-             freq[sorted(tok.added_tokens_decoder)] = math.inf
-         order = torch.sort(-freq, stable=True).indices
+@@ -1294,16 +1357,17 @@ def main():
+         else:
+             m_ord = None
+         freq = m_ord.frequency(V) if m_ord is not None else torch.bincount(token_ids(tok, "train", tag).reshape(-1), minlength=V)[:V].double()
+-        sf = softmax_fisher(ref, chunks) if emb_mode != "freq" else None
++        sf = bulk_forward("softmax Fisher", ref, softmax_fisher, chunks) if emb_mode != "freq" else None
++        legacy_order = not args.embed_order and emb_mode == "freq" and "templated" not in order_text
+ 
+         def _order_for(mode_name, table_spec):
+-            score = token_importance(freq, sf, mode_name)
+-            if table_spec.get("special first"):  # chat markers rarely appear in the text the frequencies count
++            score = freq if mode_name == "freq" else token_importance(freq, sf, mode_name)
++            if (spec if legacy_order else table_spec).get("special first"):  # chat markers rarely appear in the text the frequencies count
+                 score = score.clone()
+                 score[sorted(tok.added_tokens_decoder)] = math.inf
+             return torch.sort(-score, stable=True).indices
+ 
 -        H_out = head_inputs(ref, chunks)
 +        H_out = bulk_forward("head inputs", ref, head_inputs, chunks)
          if plan.get("embed"):
              pname = {id(p_): n for n, p_ in model.named_parameters()}
-             b_, n_ = quantize_embedding(emb.weight, plan["embed"], embedding_environment(H_out, "both" if tied else "lookup"), order, name=pname[id(emb.weight)])
-@@ -1293,8 +1356,8 @@ def main():
+             ord_emb = _order_for(emb_mode if tied else ("freq" if emb_mode == "sfisher" else emb_mode), plan["embed"])
+@@ -1340,8 +1404,8 @@ def main():
          for h_ in hooks:
              h_.remove()
          return out
@@ -1973,7 +1993,7 @@ index ea551bf..03544d7 100644
  
      def first_input(m, a, k):
          raise Stop(a[0] if a else k["hidden_states"])
-@@ -1313,11 +1376,11 @@ def main():
+@@ -1360,11 +1424,11 @@ def main():
      hq = layer0_inputs(model if bits_e else ref)  # through the quantized embedding when there is one
      hr = (layer0_inputs(ref) if bits_e else [h.clone() for h in hq]) if keep_ref else None
  
@@ -1987,7 +2007,7 @@ index ea551bf..03544d7 100644
          best = None
          for t in range(args.seeds):
              net = word(p, target, H, seed + 7919 * t, tr)
-@@ -1409,6 +1472,10 @@ def main():
+@@ -1456,6 +1520,10 @@ def main():
          ps = [prog(i, n) for n in names]
          x_stage = any(parse(p)[2] for p in ps)
          H = M = None
@@ -1998,7 +2018,7 @@ index ea551bf..03544d7 100644
          if any(parse(p)[0] not in DATA_FREE for p in ps):  # the stage's input statistics, from the stream it will see (and the reference)
              n_in = mods[0].in_features
              H = torch.zeros(n_in, n_in, device=DEV)
-@@ -1528,7 +1595,10 @@ def main():
+@@ -1575,7 +1643,10 @@ def main():
                            ((order[:n_move], k_ + 1), (order[n_move:len(imp) - n_move], k_), (order[len(imp) - n_move:], k_ - 1)) if len(rows)]
              if groups is not None:
                  def round_group(rows, bits):
@@ -2010,7 +2030,7 @@ index ea551bf..03544d7 100644
                  Wq, rate, entry = quantize_row_groups(target, groups, round_group, in_seed, CODES is not None or capture_this)
                  mod.weight.data = Wq.to(mod.weight.dtype).to(DEV)
                  if CODES is not None:
-@@ -1565,6 +1635,8 @@ def main():
+@@ -1612,6 +1683,8 @@ def main():
          for name in stage.get("keep", []):  # small linears: kept at 16 bits, counted
              bits_ += 16 * L.get_submodule(name).weight.numel()
              n_ += L.get_submodule(name).weight.numel()
@@ -2019,7 +2039,7 @@ index ea551bf..03544d7 100644
          return bits_, n_
  
      def expert_programs(i, name, E):
-@@ -1626,6 +1698,10 @@ def main():
+@@ -1689,6 +1762,10 @@ def main():
      for i in range(n_layers):
          t0 = time.time()
          L, Lr = layers[i], rlayers[i]
@@ -2030,7 +2050,7 @@ index ea551bf..03544d7 100644
          blocks = {}
          for st in stages_of[i]:
              blocks.setdefault((st.get("names") or st.get("keep") or [st.get("name")])[0].split(".")[0], []).append(st)
-@@ -1682,6 +1758,11 @@ def main():
+@@ -1745,6 +1822,11 @@ def main():
              hq = [run_layer(L, h, kwq[i][c]) for c, h in enumerate(hq)]
              if keep_ref:
                  hr = [run_layer(Lr, h, kwr[i][c]) for c, h in enumerate(hr)]
@@ -2042,7 +2062,7 @@ index ea551bf..03544d7 100644
          timing.append(round(time.time() - t0, 1))
          if args.library and library:  # this layer's other widths, then out of memory
              Path(args.library).mkdir(parents=True, exist_ok=True)
-@@ -1722,10 +1803,12 @@ def main():
+@@ -1785,10 +1867,12 @@ def main():
          log(f"  exported {len(EXPORT.meta['matrices'])} matrices and {len(EXPORT.meta['tables'])} tables to {out}")
      if args.save:  # preserve every changed parameter's actual evaluated values and dtype
          rp = dict(ref.named_parameters())
@@ -2056,7 +2076,7 @@ index ea551bf..03544d7 100644
      t0 = time.time()
      if args.skip_eval:
          evaluation = {"evaluation": "skipped by --skip-eval", "eval": 0, "ctx": None}
-diff --git a/current/release_validation.py b/current/release_validation.py
+diff --git a/base/release_validation.py b/current/release_validation.py
 new file mode 100644
 index 0000000..f2856e2
 --- /dev/null

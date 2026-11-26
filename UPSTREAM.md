@@ -4,7 +4,7 @@
 
 - Original project: [ShinMegamiBoson/lookatmyquant](https://github.com/ShinMegamiBoson/lookatmyquant), by Shin Megami Boson.
 - Original upstream baseline for the historical W-ModelForge results: [`4716ffee3da205a8d1df94e4abc629040893fa53`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/4716ffee3da205a8d1df94e4abc629040893fa53). The individual run receipts record their exact W-ModelForge and model revisions.
-- Current submodule pin: LookAtMyQuant 0.2.0, [`e36d2141015c26074fd0450e08729522c87c0775`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/e36d2141015c26074fd0450e08729522c87c0775), dated 2026-11-20.
+- Current submodule pin: LookAtMyQuant 0.3.0 source, [`f30a524645cc2bd13aec5c2c041d53c3d986308a`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/f30a524645cc2bd13aec5c2c041d53c3d986308a). This is the newest upstream main commit whose complete Git history passes the 10 MiB blob limit. The version is declared in the upstream package metadata. Its GitHub release tags refer to earlier model artifacts.
 - License: MIT. The original copyright and permission text remain in [LICENSE](LICENSE).
 - Integrating project: [W-World-Labs/w-modelforge](https://github.com/W-World-Labs/w-modelforge). The pristine upstream checkout is the Git submodule `upstream/lookatmyquant`. W-World-Labs maintains its changes in [`patches/lookatmyquant.patch`](patches/lookatmyquant.patch).
 
@@ -32,7 +32,9 @@ The trellis path retains the upstream trellis/LDLQ/Hadamard recipe with its cach
 
 ## Maintenance
 
-The 0.2.0 pin adds upstream Python packaging, a `lamq` CLI entrypoint, and Apple Silicon MLX runtime source. The reconstructed W-ModelForge compiler, quantization, and evaluation paths and all four EMA codebooks match the prior distribution byte for byte. Existing published measurements retain their recorded source revisions. The upstream CLI and MLX runtime still need execution checks.
+The previous pin, [`e36d2141015c26074fd0450e08729522c87c0775`](https://github.com/ShinMegamiBoson/lookatmyquant/commit/e36d2141015c26074fd0450e08729522c87c0775), added upstream Python packaging, a `lamq` entrypoint and Apple Silicon MLX runtime source. The 0.3.0 update adds upstream NVIDIA CUDA runtime source and extends the compiler. Existing published measurements retain their recorded source revisions.
+
+The rebased patch keeps W-ModelForge's legacy row-plan ordering, CPU offload, GGUF cost handling and scoped reuse of LDLQ state. The four EMA codebook blobs and published model artifact formats retain their original provenance.
 
 On 2026-11-13, downstream source maintenance added GitHub-only static CI: complete-history/tree secret scanning, source-size and distribution-scope gates, Python/JSON/Bash syntax and credential-free Colab CLI entrypoints. It preserves the four original fixed EMA codebooks by exact Git blob, clarifies optional dependency licenses, and aligns the Colab README with the recipe's existing source pin. No quantization implementation, model artifact or measured result changed; CI is not model/GPU or commercial acceptance.
 

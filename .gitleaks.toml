@@ -1,0 +1,17 @@
+[extend]
+useDefault = true
+
+# Public GPU profile keys are hardware identifiers, not credentials.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+regexes = ['^nvidia-l4_sm89_58sm$']
+paths = ['(^|/)runtime_cuda/inkling/tuning/nvidia-l4_sm89_58sm\.json$']
+
+[[allowlists]]
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "secret"
+regexes = ['^nvidia-rtx-a4500_sm86_56sm$']
+paths = ['(^|/)runtime_cuda/inkling/tuning/nvidia-rtx-a4500_sm86_56sm\.json$']

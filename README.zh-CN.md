@@ -13,7 +13,7 @@ cd w-modelforge
 bash scripts/prepare_lookatmyquant.sh
 ```
 
-[`upstream/lookatmyquant`](upstream/lookatmyquant) 是上游 Git 子模块，固定在 LookAtMyQuant 0.2.0（`e36d2141015c26074fd0450e08729522c87c0775`）。准备脚本将 W-World-Labs 维护的[兼容补丁](patches/lookatmyquant.patch)应用到生成的 `methods/lookatmyquant/` 工作目录，已有配方和脚本继续使用该路径。我们逐次审阅上游变更，并在同一提交中更新上游固定版本和对应补丁。详见[上游维护与改动](UPSTREAM.md)。
+[`upstream/lookatmyquant`](upstream/lookatmyquant) 是上游 Git 子模块，固定在 LookAtMyQuant 0.3.0 源码提交 `f30a524645cc2bd13aec5c2c041d53c3d986308a`。准备脚本将 W-World-Labs 维护的[兼容补丁](patches/lookatmyquant.patch)应用到生成的 `methods/lookatmyquant/` 工作目录，已有配方和脚本继续使用该路径。上游源码包括 `lamq` 命令，以及 MLX 和 CUDA 运行时。W-ModelForge 已公开的模型评测继续对应各次运行记录的源码版本。详见[上游维护与改动](UPSTREAM.md)。
 
 Colab 配方默认使用历史 W-ModelForge 提交，便于复现。若要用当前目录结构运行，请使用新的运行 ID，并传入 `--source-commit <W-ModelForge 完整提交 SHA>`。详见 [Colab 配方](colab/README.md)。
 

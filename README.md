@@ -14,7 +14,7 @@ cd w-modelforge
 bash scripts/prepare_lookatmyquant.sh
 ```
 
-[`upstream/lookatmyquant`](upstream/lookatmyquant) is the upstream Git submodule, pinned to LookAtMyQuant 0.2.0 (`e36d2141015c26074fd0450e08729522c87c0775`). The preparation script applies the W-maintained [compatibility patch](patches/lookatmyquant.patch) in a generated `methods/lookatmyquant/` directory used by the existing recipes and scripts. We review upstream updates and commit the new pin and corresponding patch together. [Upstream maintenance and changes](UPSTREAM.md)
+[`upstream/lookatmyquant`](upstream/lookatmyquant) is the upstream Git submodule, pinned to the LookAtMyQuant 0.3.0 source commit `f30a524645cc2bd13aec5c2c041d53c3d986308a`. The preparation script applies the W-maintained [compatibility patch](patches/lookatmyquant.patch) in a generated `methods/lookatmyquant/` directory used by the existing recipes and scripts. The upstream source includes the `lamq` CLI and MLX and CUDA runtime implementations. Published W-ModelForge model results remain tied to their recorded revisions. [Upstream maintenance and changes](UPSTREAM.md)
 
 The Colab recipe defaults to the historical W-ModelForge source revision for reproducibility. Pass `--source-commit <full-w-modelforge-sha>` with a new run ID to use the current layout. [Colab workflow](colab/README.md)
 
